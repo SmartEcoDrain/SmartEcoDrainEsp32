@@ -38,9 +38,10 @@ struct AddressLocation {
   Barangay barangay;
   String postalCode;
   String street;
+  String fullAddress;
 };
 
-// Database functions
+// Database functions using RPC
 class AddressDB {
 private:
   Supabase* db;
@@ -48,12 +49,14 @@ private:
 public:
   AddressDB(Supabase* database);
   
-  // Get address information from database
-  String getCountries();
-  String getRegions(const String& countryCode = "");
-  String getProvinces(const String& regionCode = "");
-  String getMunicipalities(const String& provinceCode = "");
-  String getBarangays(const String& municipalityCode = "");
+  // Use RPC function for efficient address data retrieval
+  String getAddressDropdownData(const String& regCode = "", const String& provCode = "", const String& cityMunCode = "");
+  
+  // Individual getters (legacy support)
+  String getRegions();
+  String getProvinces(const String& regCode);
+  String getMunicipalities(const String& provCode);
+  String getBarangays(const String& cityMunCode);
   
   // Parse address from JSON
   AddressLocation parseAddressFromJSON(const JsonObject& obj);
@@ -62,6 +65,9 @@ public:
   // Create address JSON
   String createAddressJSON(const AddressLocation& address);
   JsonDocument createAddressJSONObject(const AddressLocation& address);
+  
+  // Build full address string
+  String buildFullAddress(const AddressLocation& address);
 };
 
 // Utility functions

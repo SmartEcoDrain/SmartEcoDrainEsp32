@@ -25,7 +25,7 @@ private:
   void handleRoot();
   void handleSetup();
   void handleRestart();
-  void handleSetupMode();
+  void handleAddressData();
 
 public:
   DeviceSetup(const String& deviceId, Supabase* database);

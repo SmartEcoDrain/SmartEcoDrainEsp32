@@ -2,36 +2,91 @@
 
 AddressDB::AddressDB(Supabase* database) : db(database) {}
 
-String AddressDB::getCountries() {
-  return db->from("countries").select("*").doSelect();
+String AddressDB::getAddressDropdownData(const String& regCode, const String& provCode, const String& cityMunCode) {
+  JsonDocument params;
+  
+  if (regCode.isEmpty()) {
+    params["target_reg_code"] = nullptr;
+  } else {
+    params["target_reg_code"] = regCode;
+  }
+  
+  if (provCode.isEmpty()) {
+    params["target_prov_code"] = nullptr;
+  } else {
+    params["target_prov_code"] = provCode;
+  }
+  
+  if (cityMunCode.isEmpty()) {
+    params["target_citymun_code"] = nullptr;
+  } else {
+    params["target_citymun_code"] = cityMunCode;
+  }
+  
+  String paramsStr;
+  serializeJson(params, paramsStr);
+  
+  return db->rpc("get_address_dropdown_data", paramsStr);
 }
 
-String AddressDB::getRegions(const String& countryCode) {
-  if (countryCode.isEmpty()) {
-    return db->from("regions").select("*").doSelect();
+String AddressDB::getRegions() {
+  String result = getAddressDropdownData();
+  
+  JsonDocument doc;
+  deserializeJson(doc, result);
+  
+  if (doc.containsKey("regions")) {
+    String regionsJson;
+    serializeJson(doc["regions"], regionsJson);
+    return regionsJson;
   }
-  return db->from("regions").select("*").eq("country_code", countryCode).doSelect();
+  
+  return "[]";
 }
 
-String AddressDB::getProvinces(const String& regionCode) {
-  if (regionCode.isEmpty()) {
-    return db->from("provinces").select("*").doSelect();
+String AddressDB::getProvinces(const String& regCode) {
+  String result = getAddressDropdownData(regCode);
+  
+  JsonDocument doc;
+  deserializeJson(doc, result);
+  
+  if (doc.containsKey("provinces")) {
+    String provincesJson;
+    serializeJson(doc["provinces"], provincesJson);
+    return provincesJson;
   }
-  return db->from("provinces").select("*").eq("region_code", regionCode).doSelect();
+  
+  return "[]";
 }
 
-String AddressDB::getMunicipalities(const String& provinceCode) {
-  if (provinceCode.isEmpty()) {
-    return db->from("municipalities").select("*").doSelect();
+String AddressDB::getMunicipalities(const String& provCode) {
+  String result = getAddressDropdownData("", provCode);
+  
+  JsonDocument doc;
+  deserializeJson(doc, result);
+  
+  if (doc.containsKey("cities")) {
+    String citiesJson;
+    serializeJson(doc["cities"], citiesJson);
+    return citiesJson;
   }
-  return db->from("municipalities").select("*").eq("province_code", provinceCode).doSelect();
+  
+  return "[]";
 }
 
-String AddressDB::getBarangays(const String& municipalityCode) {
-  if (municipalityCode.isEmpty()) {
-    return db->from("barangays").select("*").doSelect();
+String AddressDB::getBarangays(const String& cityMunCode) {
+  String result = getAddressDropdownData("", "", cityMunCode);
+  
+  JsonDocument doc;
+  deserializeJson(doc, result);
+  
+  if (doc.containsKey("barangays")) {
+    String barangaysJson;
+    serializeJson(doc["barangays"], barangaysJson);
+    return barangaysJson;
   }
-  return db->from("barangays").select("*").eq("municipality_code", municipalityCode).doSelect();
+  
+  return "[]";
 }
 
 AddressLocation AddressDB::parseAddressFromJSON(const JsonObject& obj) {
@@ -69,6 +124,12 @@ AddressLocation AddressDB::parseAddressFromJSON(const JsonObject& obj) {
   
   address.postalCode = obj["postalCode"].as<String>();
   address.street = obj["street"].as<String>();
+  address.fullAddress = obj["fullAddress"].as<String>();
+  
+  // Build full address if not provided
+  if (address.fullAddress.isEmpty()) {
+    address.fullAddress = buildFullAddress(address);
+  }
   
   return address;
 }
@@ -111,8 +172,46 @@ JsonDocument AddressDB::createAddressJSONObject(const AddressLocation& address) 
   
   doc["postalCode"] = address.postalCode;
   doc["street"] = address.street;
+  doc["fullAddress"] = address.fullAddress.isEmpty() ? buildFullAddress(address) : address.fullAddress;
   
   return doc;
+}
+
+String AddressDB::buildFullAddress(const AddressLocation& address) {
+  String fullAddr = "";
+  
+  if (!address.street.isEmpty()) {
+    fullAddr += address.street;
+  }
+  
+  if (!address.barangay.desc.isEmpty()) {
+    if (!fullAddr.isEmpty()) fullAddr += ", ";
+    fullAddr += address.barangay.desc;
+  }
+  
+  if (!address.municipality.desc.isEmpty()) {
+    if (!fullAddr.isEmpty()) fullAddr += ", ";
+    fullAddr += address.municipality.desc;
+  }
+  
+  if (!address.province.desc.isEmpty()) {
+    if (!fullAddr.isEmpty()) fullAddr += ", ";
+    fullAddr += address.province.desc;
+  }
+  
+  if (!address.region.desc.isEmpty()) {
+    if (!fullAddr.isEmpty()) fullAddr += ", ";
+    fullAddr += address.region.desc;
+  }
+  
+  if (!fullAddr.isEmpty()) fullAddr += ", ";
+  fullAddr += "PHILIPPINES";
+  
+  if (!address.postalCode.isEmpty()) {
+    fullAddr += " " + address.postalCode;
+  }
+  
+  return fullAddr;
 }
 
 AddressLocation createAddress(const String& countryCode, const String& countryDesc,
@@ -134,5 +233,10 @@ AddressLocation createAddress(const String& countryCode, const String& countryDe
   address.barangay.desc = barangayDesc;
   address.postalCode = postalCode;
   address.street = street;
+  
+  // Build full address
+  AddressDB tempDB(nullptr);
+  address.fullAddress = tempDB.buildFullAddress(address);
+  
   return address;
 }
