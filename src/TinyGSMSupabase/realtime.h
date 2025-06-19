@@ -1,5 +1,5 @@
-#ifndef Realtime_h
-#define Realtime_h
+#ifndef REALTIME_H
+#define REALTIME_H
 
 #include <Arduino.h>
 #include <ArduinoJson.h>

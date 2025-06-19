@@ -1,3 +1,6 @@
+#ifndef USER_H
+#define USER_H
+
 #include <Arduino.h>
 #include "address.h"
 #include <map>
@@ -18,3 +21,5 @@ struct User {
   String email;
   int age;
 };
+
+#endif // USER_H

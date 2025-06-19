@@ -1,3 +1,5 @@
+#ifndef DEVICE_H
+#define DEVICE_H
 
 #include <Arduino.h>
 #include "../configs.h"
@@ -8,6 +10,7 @@ struct Device {
   String id;
   String name;
   String ownerId;
+  String deviceDataId;
   AddressLocation location;
   bool onlineStatus;
   bool isActive = true;
@@ -51,3 +54,16 @@ struct DeviceData {
   DeviceDataModule module;
   String lastUpdatedAt;
 };
+
+JsonDocument createDeviceDataJSONObject(const DeviceData &deviceData);
+String createDeviceDataJSON(const DeviceData &deviceData);
+DeviceData parseDeviceDataJSON(const JsonObject &obj);
+DeviceData parseDeviceDataJSON(const JsonDocument &doc);
+String createDeviceJSON(const Device &device);
+Device parseDeviceJSON(const JsonObject &obj);
+Device parseDeviceJSON(const JsonDocument &doc);
+Device createDevice(const String &id, const String &name, const String &ownerId,
+                     const AddressLocation &location, bool onlineStatus = false,
+                     bool isActive = true, const String &deviceVersion = DEVICE_VERSION);
+
+#endif // DEVICE_DB_H

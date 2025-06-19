@@ -1,7 +1,7 @@
 #include "device.h"
 #include <ArduinoJson.h>
 
-String createDeviceDataJSON(const DeviceData &deviceData)
+JsonDocument createDeviceDataJSONObject(const DeviceData &deviceData)
 {
   JsonDocument doc;
 
@@ -21,7 +21,6 @@ String createDeviceDataJSON(const DeviceData &deviceData)
     batteryStatus = "unknown"; // Default if not set
   device["battery_status"] = batteryStatus;
   device["is_online"] = deviceData.device.isOnline;
-  device["status"] = deviceData.device.status;
 
   JsonObject deviceStatus = device["status"].to<JsonObject>();
   for (const auto &pair : deviceData.module.status)
@@ -45,6 +44,13 @@ String createDeviceDataJSON(const DeviceData &deviceData)
     moduleStatus[pair.first] = pair.second;
 
   doc["lastUpdatedAt"] = deviceData.lastUpdatedAt;
+  
+  return doc;
+}
+
+String createDeviceDataJSON(const DeviceData &deviceData)
+{
+  JsonDocument doc = createDeviceDataJSONObject(deviceData);
 
   String jsonString;
   serializeJson(doc, jsonString);
@@ -77,17 +83,18 @@ DeviceData parseDeviceDataJSON(const JsonObject &obj)
 {
   DeviceData deviceData;
 
-  deviceData.device.cpuTemperature = obj["cpu_temperature"].as<float>();
-  deviceData.device.cpuFrequency = obj["cpu_frequency"].as<float>();
-  deviceData.device.ramUsage = obj["ram_usage"].as<float>();
-  deviceData.device.storageUsage = obj["storage_usage"].as<float>();
-  deviceData.device.signalStrength = obj["signal_strength"].as<float>();
-  deviceData.device.batteryVoltage = obj["battery_voltage"].as<float>();
-  deviceData.device.batteryPercentage = obj["battery_percentage"].as<float>();
-  deviceData.device.solarWattage = obj["solar_wattage"].as<float>();
-  deviceData.device.uptimeMs = obj["uptime_ms"].as<unsigned long>();
-  deviceData.device.batteryStatus = obj["battery_status"].as<String>();
-  deviceData.device.isOnline = obj["is_online"].as<bool>();
+  JsonObject device = obj["device"].as<JsonObject>();
+  deviceData.device.cpuTemperature = device["cpu_temperature"].as<float>();
+  deviceData.device.cpuFrequency = device["cpu_frequency"].as<float>();
+  deviceData.device.ramUsage = device["ram_usage"].as<float>();
+  deviceData.device.storageUsage = device["storage_usage"].as<float>();
+  deviceData.device.signalStrength = device["signal_strength"].as<float>();
+  deviceData.device.batteryVoltage = device["battery_voltage"].as<float>();
+  deviceData.device.batteryPercentage = device["battery_percentage"].as<float>();
+  deviceData.device.solarWattage = device["solar_wattage"].as<float>();
+  deviceData.device.uptimeMs = device["uptime_ms"].as<unsigned long>();
+  deviceData.device.batteryStatus = device["battery_status"].as<String>();
+  deviceData.device.isOnline = device["is_online"].as<bool>();
 
   JsonObject statusObj = obj["status"].as<JsonObject>();
   for (JsonPair kvp : statusObj)
@@ -117,7 +124,7 @@ DeviceData parseDeviceDataJSON(const JsonObject &obj)
 
 DeviceData parseDeviceDataJSON(const JsonDocument &doc)
 {
-  return parseDeviceDataJSON(doc["deviceData"].as<JsonObjectConst>());
+  return parseDeviceDataJSON(doc["device"].as<JsonObjectConst>());
 }
 
 String createDeviceJSON(const Device &device)
@@ -155,37 +162,4 @@ String createDeviceJSON(const Device &device)
   String jsonString;
   serializeJson(doc, jsonString);
   return jsonString;
-}
-
-Device parseDeviceJSON(const String &jsonString)
-{
-  Device device;
-  JsonDocument doc;
-
-  DeserializationError error = deserializeJson(doc, jsonString);
-  if (error)
-  {
-    Serial.println("Failed to parse JSON: " + String(error.c_str()));
-    return device; // Return empty device on error
-  }
-
-  JsonObject dev = doc["device"].as<JsonObject>();
-  device.id = dev["id"].as<String>();
-  device.name = dev["name"].as<String>();
-  device.ownerId = dev["ownerId"].as<String>();
-  device.onlineStatus = dev["onlineStatus"].as<bool>();
-  device.isActive = dev["isActive"].as<bool>();
-  device.deviceVersion = dev["deviceVersion"].as<String>();
-
-  JsonObject locationObj = dev["location"].as<JsonObject>();
-  device.location = parseAddressJSON(locationObj);
-
-  device.createdAt = dev["createdAt"].as<String>();
-  device.updatedAt = dev["updatedAt"].as<String>();
-
-  JsonObject configObj = dev["config"].as<JsonObject>();
-  for (JsonPair kvp : configObj)
-    device.config[kvp.key().c_str()] = kvp.value().as<String>();
-
-  return device;
 }

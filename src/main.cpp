@@ -3,11 +3,14 @@
 
 #include "configs.h"
 #include "Utils/utilities.h"
+#include "Utils/device_id.h"
+#include "Setup/device_setup.h"
+#include "Database/device_db.h"
+#include "Database/user_db.h"
+#include "Database/address.h"
 #include <ArduinoJson.h>
 
 // Esp32 specific includes
-#include <WiFi.h>
-#include <WebServer.h>
 #include <EEPROM.h>
 
 // Include TinyGSM Supabase library
@@ -28,15 +31,13 @@ TinyGsm modem(SerialAT);
 
 TinyGsmClient client(modem);
 Supabase db;
-WebServer server(80);
 
 // Global variables
-bool setupMode = false;
-bool setupCompleted = false;
-String deviceName = "";
-String deviceLocation = "";
-String deviceStreet = "";
-String devicePostalCode = "";
+String deviceId;
+DeviceSetup* deviceSetup;
+DeviceDB* deviceDB;
+UserDB* userDB;
+AddressDB* addressDB;
 
 // Sensor data structure with separate device and module status
 struct SensorData {
@@ -71,237 +72,11 @@ struct SensorData {
   } module;
 };
 
-// Check if device setup is completed
-bool isSetupCompleted() {
-  EEPROM.begin(EEPROM_SIZE);
-  uint16_t magic = (EEPROM.read(SETUP_FLAG_ADDR) << 8) | EEPROM.read(SETUP_FLAG_ADDR + 1);
-  EEPROM.end();
-  return magic == SETUP_MAGIC_NUMBER;
-}
-
-// Mark setup as completed
-void markSetupCompleted() {
-  EEPROM.begin(EEPROM_SIZE);
-  EEPROM.write(SETUP_FLAG_ADDR, (SETUP_MAGIC_NUMBER >> 8) & 0xFF);
-  EEPROM.write(SETUP_FLAG_ADDR + 1, SETUP_MAGIC_NUMBER & 0xFF);
-  EEPROM.commit();
-  EEPROM.end();
-  setupCompleted = true;
-}
-
-// Reset setup flag (for testing)
-void resetSetupFlag() {
-  EEPROM.begin(EEPROM_SIZE);
-  EEPROM.write(SETUP_FLAG_ADDR, 0);
-  EEPROM.write(SETUP_FLAG_ADDR + 1, 0);
-  EEPROM.commit();
-  EEPROM.end();
-}
-
-// Web server handlers for device setup
-void handleRoot() {
-  String html = R"(
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Device Setup</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>
-        body { font-family: Arial, sans-serif; margin: 40px; background: #f5f5f5; }
-        .container { max-width: 500px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-        h1 { color: #333; text-align: center; margin-bottom: 30px; }
-        .form-group { margin-bottom: 20px; }
-        label { display: block; margin-bottom: 5px; font-weight: bold; color: #555; }
-        input, select { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 16px; }
-        button { width: 100%; padding: 12px; background: #007bff; color: white; border: none; border-radius: 5px; font-size: 16px; cursor: pointer; }
-        button:hover { background: #0056b3; }
-        .device-info { background: #e9ecef; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
-        .status { padding: 10px; border-radius: 5px; margin-top: 20px; text-align: center; }
-        .success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
-        .error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>🔧 Device Setup</h1>
-        
-        <div class="device-info">
-            <strong>Device ID:</strong> )" + String(DEVICE_ID) + R"(<br>
-            <strong>Firmware:</strong> )" + String(DEVICE_VERSION) + R"(<br>
-            <strong>Chip Model:</strong> )" + ESP.getChipModel() + R"(
-        </div>
-
-        <form id="setupForm">
-            <div class="form-group">
-                <label for="deviceName">Device Name:</label>
-                <input type="text" id="deviceName" name="deviceName" required placeholder="e.g., Sensor Node 001">
-            </div>
-            
-            <div class="form-group">
-                <label for="location">Location:</label>
-                <input type="text" id="location" name="location" required placeholder="e.g., Manila, Philippines">
-            </div>
-            
-            <div class="form-group">
-                <label for="street">Street Address:</label>
-                <input type="text" id="street" name="street" required placeholder="e.g., 123 Sample Street, Barangay ABC">
-            </div>
-            
-            <div class="form-group">
-                <label for="postalCode">Postal Code:</label>
-                <input type="text" id="postalCode" name="postalCode" required placeholder="e.g., 1000">
-            </div>
-            
-            <div class="form-group">
-                <label for="email">Admin Email:</label>
-                <input type="email" id="email" name="email" required placeholder="admin@example.com">
-            </div>
-            
-            <div class="form-group">
-                <label for="password">Admin Password:</label>
-                <input type="password" id="password" name="password" required placeholder="Minimum 8 characters">
-            </div>
-            
-            <button type="submit">Complete Setup</button>
-        </form>
-        
-        <div id="status" class="status" style="display: none;"></div>
-    </div>
-
-    <script>
-        document.getElementById('setupForm').addEventListener('submit', async function(e) {
-            e.preventDefault();
-            
-            const formData = new FormData(e.target);
-            const data = Object.fromEntries(formData.entries());
-            
-            document.getElementById('status').style.display = 'none';
-            
-            try {
-                const response = await fetch('/setup', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify(data)
-                });
-                
-                const result = await response.json();
-                const statusDiv = document.getElementById('status');
-                statusDiv.style.display = 'block';
-                
-                if (response.ok && result.success) {
-                    statusDiv.className = 'status success';
-                    statusDiv.innerHTML = '✅ Setup completed successfully! Device will restart and begin data logging.';
-                    setTimeout(() => {
-                        window.location.href = '/restart';
-                    }, 3000);
-                } else {
-                    statusDiv.className = 'status error';
-                    statusDiv.innerHTML = '❌ Setup failed: ' + (result.message || 'Unknown error');
-                }
-            } catch (error) {
-                const statusDiv = document.getElementById('status');
-                statusDiv.style.display = 'block';
-                statusDiv.className = 'status error';
-                statusDiv.innerHTML = '❌ Network error: ' + error.message;
-            }
-        });
-    </script>
-</body>
-</html>
-)";
-  server.send(200, "text/html", html);
-}
-
-void handleSetup() {
-  if (server.method() == HTTP_POST) {
-    String body = server.arg("plain");
-    JsonDocument doc;
-    deserializeJson(doc, body);
-    
-    // Extract setup data
-    deviceName = doc["deviceName"].as<String>();
-    deviceLocation = doc["location"].as<String>();
-    deviceStreet = doc["street"].as<String>();
-    devicePostalCode = doc["postalCode"].as<String>();
-    String email = doc["email"].as<String>();
-    String password = doc["password"].as<String>();
-    
-    Serial.println("Setup data received:");
-    Serial.println("Device Name: " + deviceName);
-    Serial.println("Location: " + deviceLocation);
-    Serial.println("Street: " + deviceStreet);
-    Serial.println("Postal Code: " + devicePostalCode);
-    
-    // For now, we'll simulate successful setup
-    // In a real implementation, you would:
-    // 1. Connect to internet via cellular
-    // 2. Create user account in Supabase
-    // 3. Complete device setup via RPC calls
-
-    markSetupCompleted();
-    
-    JsonDocument response;
-    response["success"] = true;
-    response["message"] = "Device setup completed successfully";
-    response["device_id"] = DEVICE_ID;
-    response["device_name"] = deviceName;
-    response["full_location"] = deviceStreet + ", " + deviceLocation + " " + devicePostalCode;
-    
-    String responseStr;
-    serializeJson(response, responseStr);
-    server.send(200, "application/json", responseStr);
-  } else {
-    server.send(405, "text/plain", "Method Not Allowed");
-  }
-}
-
-void handleRestart() {
-  server.send(200, "text/html", 
-    "<html><body><h1>Device Restarting...</h1><p>Setup completed. Device will now restart and begin normal operation.</p></body></html>");
-  delay(2000);
-  ESP.restart();
-}
-
-void startSetupMode() {
-  Serial.println("\n=== Starting Setup Mode ===");
-  setupMode = true;
-  
-  // Start WiFi Access Point
-  WiFi.mode(WIFI_AP);
-  WiFi.softAP(SETUP_SSID, SETUP_PASSWORD);
-  
-  Serial.printf("Setup WiFi started: %s\n", SETUP_SSID);
-  Serial.printf("Password: %s\n", SETUP_PASSWORD);
-  Serial.printf("IP Address: %s\n", WiFi.softAPIP().toString().c_str());
-  
-  // Setup web server routes
-  server.on("/", handleRoot);
-  server.on("/setup", handleSetup);
-  server.on("/restart", handleRestart);
-  
-  server.begin();
-  Serial.println("Setup web server started");
-  Serial.println("Connect to the WiFi network and visit http://192.168.4.1");
-}
-
-void handleSetupMode() {
-  server.handleClient();
-  
-  // Check for setup timeout
-  static unsigned long setupStartTime = millis();
-  if (millis() - setupStartTime > SETUP_TIMEOUT) {
-    Serial.println("Setup timeout reached. Restarting...");
-    ESP.restart();
-  }
-}
-
 void initializeModem()
 {
   Serial.begin(115200);
   Serial.println("=== TinyGSM Supabase Data Logger ===");
-  Serial.printf("Device ID: %s\n", DEVICE_ID);
+  Serial.printf("Device ID: %s\n", deviceId.c_str());
   SerialAT.begin(115200, SERIAL_8N1, MODEM_RX_PIN, MODEM_TX_PIN);
 
 #ifdef BOARD_POWERON_PIN
@@ -410,40 +185,23 @@ void initializeModem()
   Serial.println("Modem initialization complete!");
 }
 
-bool checkDeviceSetupStatus() {
-  Serial.println("Checking device setup status...");
-  
-  // Check via Supabase if device is properly setup
-  String checkResult = db.rpc("check_device_setup", "{\"device_id\":\"" + String(DEVICE_ID) + "\"}");
-  Serial.println("Setup check result: " + checkResult);
-  
-  JsonDocument doc;
-  deserializeJson(doc, checkResult);
-  
-  if (doc["setup_completed"].as<bool>() == true) {
-    deviceName = doc["device_name"].as<String>();
-    deviceLocation = doc["location"].as<String>();
-    Serial.println("✓ Device setup completed previously");
-    Serial.printf("Device Name: %s\n", deviceName.c_str());
-    Serial.printf("Location: %s\n", deviceLocation.c_str());
-    return true;
-  }
-  
-  Serial.println("✗ Device setup required");
-  return false;
-}
-
 void setup()
 {
   Serial.begin(115200);
   Serial.println("\n=== Device Starting ===");
   
+  // Get or generate device ID
+  deviceId = getOrGenerateDeviceId();
+  
+  // Initialize database classes
+  deviceSetup = new DeviceSetup(deviceId, &db);
+  
   // Check if setup is completed locally
-  setupCompleted = isSetupCompleted();
+  bool setupCompleted = deviceSetup->isSetupCompleted();
   
   if (!setupCompleted) {
     Serial.println("Setup required - Starting setup mode...");
-    startSetupMode();
+    deviceSetup->startSetupMode();
     return;
   }
   
@@ -456,23 +214,29 @@ void setup()
   Serial.println("Initializing Supabase connection...");
   db.begin(SUPABASE_URL, SUPABASE_ANON_KEY, modem, client);
   
+  // Initialize database classes
+  deviceDB = new DeviceDB(&db);
+  userDB = new UserDB(&db);
+  addressDB = new AddressDB(&db);
+  
   // Check setup status in database
-  if (!checkDeviceSetupStatus()) {
+  if (!deviceSetup->checkDeviceSetupStatus()) {
     Serial.println("Database setup incomplete - requires online setup");
     // Could enter setup mode again or continue with default values
   }
   
-  
   Serial.println("=== Setup Complete ===");
   Serial.println("Starting data logging loop...\n");
-  Serial.printf("Device %s (%s) is now operational\n", DEVICE_ID, deviceName.c_str());
+  Serial.printf("Device %s (%s) is now operational\n", 
+                deviceId.c_str(), 
+                deviceSetup->getDeviceName().c_str());
 }
 
 void loop()
 {
   // Handle setup mode
-  if (setupMode && !setupCompleted) {
-    handleSetupMode();
+  if (deviceSetup->isInSetupMode()) {
+    deviceSetup->loop();
     return;
   }
   
@@ -488,8 +252,8 @@ void loop()
   {
     Serial.printf("[%lu] %s (%s) running... Next data log in %lu seconds\n", 
                   currentTime / 1000, 
-                  DEVICE_ID,
-                  deviceName.c_str(),
+                  deviceId.c_str(),
+                  deviceSetup->getDeviceName().c_str(),
                   (DATA_LOG_INTERVAL - (currentTime - lastDataLog)) / 1000);
     lastStatusPrint = currentTime;
   }
@@ -505,6 +269,9 @@ void loop()
       delay(5000);
       return;
     }
+    
+    // Example of updating device status
+    deviceDB->updateDeviceStatus(deviceId, true);
     
     lastDataLog = currentTime;
   }

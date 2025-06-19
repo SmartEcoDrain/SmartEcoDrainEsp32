@@ -1,3 +1,5 @@
+#pragma once
+
 // Sensor Node Configuration
 #define FORCE0_ANALOG_PIN 35
 #define FORCE1_ANALOG_PIN 34
@@ -10,8 +12,8 @@
 #define ULTRASONIC_ECHO_PIN 26
 
 // Supabase Configuration
-const char* SUPABASE_URL = "https://mpsrepfjrnjaciobvdrh.supabase.co";
-const char* SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1wc3JlcGZqcm5qYWNpb2J2ZHJoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk0MDIwNjUsImV4cCI6MjA2NDk3ODA2NX0.l03peDJRu6VhvX6htZ5AIe10whscVC0GVe-51JGbx1Q";
+#define SUPABASE_URL "https://mpsrepfjrnjaciobvdrh.supabase.co"
+#define SUPABASE_ANON_KEY "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1wc3JlcGZqcm5qYWNpb2J2ZHJoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk0MDIwNjUsImV4cCI6MjA2NDk3ODA2NX0.l03peDJRu6VhvX6htZ5AIe10whscVC0GVe-51JGbx1Q"
 
 #define DEVICE_ID "esp32_sensor_001"  // Change this for each device
 #define DEVICE_VERSION "0.0.1"

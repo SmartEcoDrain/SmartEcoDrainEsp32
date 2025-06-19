@@ -1,5 +1,5 @@
-#ifndef Supabase_h
-#define Supabase_h
+#ifndef SUPABASE_h
+#define SUPABASE_h
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
@@ -91,4 +91,4 @@ public:
   String rpc(String func_name, String json_param = "");
 };
 
-#endif
+#endif // SUPABASE_h
