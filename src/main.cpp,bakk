@@ -38,39 +38,6 @@ String deviceLocation = "";
 String deviceStreet = "";
 String devicePostalCode = "";
 
-// Sensor data structure with separate device and module status
-struct SensorData {
-  // Device data
-  float cpuTemperature;
-  int signalStrength;
-  float batteryVoltage;
-  String firmwareVersion;
-  unsigned long uptime;
-  
-  // Module data
-  float tof1;
-  float tof2;
-  float force1;
-  float force2;
-  float weight1;
-  float weight2;
-  float turbidity1;
-  float turbidity2;
-  float ultrasonic1;
-  float ultrasonic2;
-  
-  // Separate status tracking
-  struct {
-    String status;
-    String message;
-  } device;
-  
-  struct {
-    String status;
-    String message;
-  } module;
-};
-
 // Check if device setup is completed
 bool isSetupCompleted() {
   EEPROM.begin(EEPROM_SIZE);

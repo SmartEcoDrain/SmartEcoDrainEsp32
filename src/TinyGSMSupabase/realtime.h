@@ -5,7 +5,7 @@
 #include <ArduinoJson.h>
 
 // TinyGSM includes instead of WiFi
-#include "utilities.h"
+#include "../Utils/utilities.h"
 #include <TinyGsmClient.h>
 
 // Note: WebSockets are not supported with TinyGSM as it requires more complex handling

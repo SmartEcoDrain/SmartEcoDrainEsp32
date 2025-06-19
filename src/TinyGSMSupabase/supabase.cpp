@@ -1,4 +1,4 @@
-#include "Supabase.h"
+#include "supabase.h"
 
 void Supabase::_check_last_string()
 {

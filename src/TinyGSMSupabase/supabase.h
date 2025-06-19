@@ -5,7 +5,7 @@
 #include <ArduinoJson.h>
 
 // TinyGSM includes instead of WiFi
-#include "utilities.h"
+#include "../Utils/utilities.h"
 #include <TinyGsmClient.h>
 
 class Supabase

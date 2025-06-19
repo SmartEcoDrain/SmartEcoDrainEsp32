@@ -1,4 +1,4 @@
-#include "Realtime.h"
+#include "realtime.h"
 
 int SupabaseRealtime::makeHttpRequest(String method, String url, String headers, String body)
 {

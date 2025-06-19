@@ -1,27 +1,27 @@
 // Sensor Node Configuration
-#define TOF1_PIN 5
-#define TOF2_PIN 6
-#define FORCE1_PIN A0
-#define FORCE2_PIN A3
-#define WEIGHT1_PIN A4
-#define WEIGHT2_PIN A5
-#define TURBIDITY1_PIN A6
-#define TURBIDITY2_PIN A7   
-#define ULTRASONIC1_TRIG_PIN 7
-#define ULTRASONIC1_ECHO_PIN 8
-#define ULTRASONIC2_TRIG_PIN 9
-#define ULTRASONIC2_ECHO_PIN 10
+#define FORCE0_ANALOG_PIN 35
+#define FORCE1_ANALOG_PIN 34
+#define TOF_SCL_PIN 22
+#define TOF_SDA_PIN 21
+#define WEIGHT_DATA_PIN 12
+#define WEIGHT_SCK_PIN 14
+#define TURBIDITY_ANALOG_PIN 32
+#define ULTRASONIC_TRIG_PIN 25
+#define ULTRASONIC_ECHO_PIN 26
 
 // Supabase Configuration
-const char* SUPABASE_URL = "https://efyzoqrkvaxvuphvmlnt.supabase.co";
-const char* SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVmeXpvcXJrdmF4dnVwaHZtbG50Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDkzNjgwNTIsImV4cCI6MjA2NDk0NDA1Mn0.T9B5jFhXX9XrD_AJ-i1fGj5Auzx7pj7DK5tzY-C7Uhg";
+const char* SUPABASE_URL = "https://mpsrepfjrnjaciobvdrh.supabase.co";
+const char* SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1wc3JlcGZqcm5qYWNpb2J2ZHJoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk0MDIwNjUsImV4cCI6MjA2NDk3ODA2NX0.l03peDJRu6VhvX6htZ5AIe10whscVC0GVe-51JGbx1Q";
 
-// Device Configuration - IMPORTANT: Make each device unique
 #define DEVICE_ID "esp32_sensor_001"  // Change this for each device
-#define DEVICE_VERSION "1.0.0"
-#define DEVICE_LOCATION "Test_Location_A"
+#define DEVICE_VERSION "0.0.1"
 
-// Network Configuration (adjust for your carrier)
-#ifndef NETWORK_APN
-#define NETWORK_APN "internet"  // Change to your carrier's APN
-#endif
+// Setup mode configuration
+#define SETUP_SSID "SmartEchoDrain"
+#define SETUP_PASSWORD "echodrain25"
+#define SETUP_TIMEOUT 300000  // 5 minutes setup timeout
+
+// EEPROM addresses for storing setup completion flag
+#define EEPROM_SIZE 512
+#define SETUP_FLAG_ADDR 0
+#define SETUP_MAGIC_NUMBER 0xABCD

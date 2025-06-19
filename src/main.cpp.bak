@@ -1,22 +1,17 @@
 #define TINY_GSM_RX_BUFFER 1024
 // #define DUMP_AT_COMMANDS
 
-#include "configs.h"
-#include "Utils/utilities.h"
-#include <ArduinoJson.h>
 
-// Esp32 specific includes
+#include "Utils/utilities.h"
+#include "configs.h"
+#include <TinyGsmClient.h>
+#include <ArduinoJson.h>
 #include <WiFi.h>
 #include <WebServer.h>
 #include <EEPROM.h>
 
 // Include TinyGSM Supabase library
-#include <TinyGsmClient.h>
 #include <TinyGSMSupabase/supabase.h>
-
-// Module libraries
-#include <Wire.h>
-#include <Adafruit_VL53L0X.h>
 
 #ifdef DUMP_AT_COMMANDS
 #include <StreamDebugger.h>
@@ -433,6 +428,250 @@ bool checkDeviceSetupStatus() {
   return false;
 }
 
+void initializeSensors()
+{
+  Serial.println("Initializing sensors...");
+  
+  // Initialize ultrasonic sensors
+  pinMode(ULTRASONIC1_TRIG_PIN, OUTPUT);
+  pinMode(ULTRASONIC1_ECHO_PIN, INPUT);
+  pinMode(ULTRASONIC2_TRIG_PIN, OUTPUT);
+  pinMode(ULTRASONIC2_ECHO_PIN, INPUT);
+  
+  Serial.println("Sensors initialized!");
+}
+
+float readUltrasonicDistance(int trigPin, int echoPin)
+{
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+  
+  long duration = pulseIn(echoPin, HIGH);
+  float distance = duration * 0.034 / 2; // Convert to cm
+  
+  return distance;
+}
+
+SensorData readAllSensors()
+{
+  SensorData data;
+  
+  // Read device sensors
+  data.cpuTemperature = temperatureRead(); // ESP32 internal temperature
+  data.signalStrength = modem.getSignalQuality();
+  data.batteryVoltage = 3.7; // Read actual battery voltage if available
+  data.firmwareVersion = DEVICE_VERSION;
+  data.uptime = millis();
+  
+  // Read module sensors
+  data.tof1 = analogRead(TOF1_PIN) * 0.1; // Convert to appropriate units
+  data.tof2 = analogRead(TOF2_PIN) * 0.1;
+  data.force1 = analogRead(FORCE1_PIN) * 0.1;
+  data.force2 = analogRead(FORCE2_PIN) * 0.1;
+  data.weight1 = analogRead(WEIGHT1_PIN) * 0.1;
+  data.weight2 = analogRead(WEIGHT2_PIN) * 0.1;
+  data.turbidity1 = analogRead(TURBIDITY1_PIN) * 0.1;
+  data.turbidity2 = analogRead(TURBIDITY2_PIN) * 0.1;
+  data.ultrasonic1 = readUltrasonicDistance(ULTRASONIC1_TRIG_PIN, ULTRASONIC1_ECHO_PIN);
+  data.ultrasonic2 = readUltrasonicDistance(ULTRASONIC2_TRIG_PIN, ULTRASONIC2_ECHO_PIN);
+  
+  // Determine DEVICE status based on device-specific factors
+  if (data.batteryVoltage < 3.6)
+  {
+    data.device.status = "error";
+    data.device.message = "Critical battery level";
+  }
+  else if (data.batteryVoltage < 3.7)
+  {
+    data.device.status = "warning";
+    data.device.message = "Low battery warning";
+  }
+  else if (data.signalStrength < 10)
+  {
+    data.device.status = "warning";
+    data.device.message = "Low signal strength detected";
+  }
+  else if (data.cpuTemperature > 85.0) // ESP32 critical temperature
+  {
+    data.device.status = "warning";
+    data.device.message = "High CPU temperature";
+  }
+  else
+  {
+    data.device.status = "online";
+    data.device.message = "Device operational";
+  }
+  
+  // Determine MODULE status based on sensor readings
+  bool sensorError = false;
+  bool sensorWarning = false;
+  String moduleIssues = "";
+  
+  // Check for sensor errors (invalid readings)
+  if (isnan(data.tof1) || isnan(data.tof2))
+  {
+    sensorError = true;
+    moduleIssues += "ToF sensor failure; ";
+  }
+  
+  if (data.ultrasonic1 > 500 || data.ultrasonic2 > 500 || data.ultrasonic1 < 2 || data.ultrasonic2 < 2)
+  {
+    sensorWarning = true;
+    moduleIssues += "Ultrasonic out of range; ";
+  }
+  
+  if (data.force1 < 0 || data.force2 < 0)
+  {
+    sensorWarning = true;
+    moduleIssues += "Force sensor anomaly; ";
+  }
+  
+  if (data.turbidity1 > 3000 || data.turbidity2 > 3000) // High turbidity
+  {
+    sensorWarning = true;
+    moduleIssues += "High turbidity detected; ";
+  }
+  
+  // Set module status
+  if (sensorError)
+  {
+    data.module.status = "error";
+    data.module.message = "Sensor failure: " + moduleIssues;
+  }
+  else if (sensorWarning)
+  {
+    data.module.status = "warning";
+    data.module.message = "Sensor issues: " + moduleIssues;
+  }
+  else
+  {
+    data.module.status = "online";
+    data.module.message = "All modules operational";
+  }
+  
+  return data;
+}
+
+String createSupabaseJSON(const SensorData& sensorData)
+{
+  JsonDocument doc;
+  
+  // Create device object with status
+  JsonObject device = doc["device"].to<JsonObject>();
+  device["id"] = DEVICE_ID;
+  device["name"] = deviceName;
+  device["cpu_temperature"] = sensorData.cpuTemperature;
+  device["signal_strength"] = sensorData.signalStrength;
+  device["battery_voltage"] = sensorData.batteryVoltage;
+  device["firmware_version"] = sensorData.firmwareVersion;
+  device["uptime_ms"] = sensorData.uptime;
+  device["free_heap"] = ESP.getFreeHeap();
+  device["chip_model"] = ESP.getChipModel();
+  device["status"] = sensorData.device.status;
+  device["message"] = sensorData.device.message;
+  
+  // Create module object with status
+  JsonObject module = doc["module"].to<JsonObject>();
+  module["tof1"] = sensorData.tof1;
+  module["tof2"] = sensorData.tof2;
+  module["force1"] = sensorData.force1;
+  module["force2"] = sensorData.force2;
+  module["weight1"] = sensorData.weight1;
+  module["weight2"] = sensorData.weight2;
+  module["turbidity1"] = sensorData.turbidity1;
+  module["turbidity2"] = sensorData.turbidity2;
+  module["ultrasonic1"] = sensorData.ultrasonic1;
+  module["ultrasonic2"] = sensorData.ultrasonic2;
+  module["status"] = sensorData.module.status;
+  module["message"] = sensorData.module.message;
+  
+  // Add overall status based on worst case between device and module
+  String overallStatus = "online";
+  String overallMessage = "All systems operational";
+  
+  if (sensorData.device.status == "error" || sensorData.module.status == "error")
+  {
+    overallStatus = "error";
+    overallMessage = "System errors detected";
+  }
+  else if (sensorData.device.status == "warning" || sensorData.module.status == "warning")
+  {
+    overallStatus = "warning";
+    overallMessage = "System warnings detected";
+  }
+  
+  doc["status"] = overallStatus;
+  doc["message"] = overallMessage;
+  
+  // Add timestamp (ISO 8601 format)
+  char timestamp[32];
+  snprintf(timestamp, sizeof(timestamp), "%04d-%02d-%02dT%02d:%02d:%02dZ", 
+           2025, 6, 8, 12, 0, 0); // You would get actual time from NTP or RTC
+  doc["timestamp"] = timestamp;
+  
+  String jsonString;
+  serializeJson(doc, jsonString);
+  return jsonString;
+}
+
+bool logDataToSupabase(const SensorData& sensorData)
+{
+  Serial.println("\n=== Logging Data to Supabase ===");
+  
+  // Create JSON payload
+  String jsonPayload = createSupabaseJSON(sensorData);
+  Serial.println("JSON Payload:");
+  Serial.println(jsonPayload);
+  
+  // Insert data into Supabase (trigger will automatically update device status)
+  int result = db.insert("data", jsonPayload, false);
+  
+  Serial.print("Insert result: ");
+  Serial.println(result);
+  
+  if (result >= 200 && result < 300)
+  {
+    Serial.println("✓ Data logged successfully!");
+    return true;
+  }
+  else
+  {
+    Serial.println("✗ Failed to log data!");
+    return false;
+  }
+}
+
+void printSensorData(const SensorData& data)
+{
+  Serial.println("\n=== Sensor Readings ===");
+  Serial.printf("Device ID: %s\n", DEVICE_ID);
+  Serial.printf("Device Name: %s\n", deviceName.c_str());
+  Serial.printf("Location: %s\n", deviceLocation.c_str());
+  Serial.printf("CPU Temperature: %.2f°C\n", data.cpuTemperature);
+  Serial.printf("Signal Strength: %d\n", data.signalStrength);
+  Serial.printf("Battery Voltage: %.2fV\n", data.batteryVoltage);
+  Serial.printf("Uptime: %lu ms\n", data.uptime);
+  
+  Serial.println("\n=== Module Readings ===");
+  Serial.printf("ToF1: %.2f\n", data.tof1);
+  Serial.printf("ToF2: %.2f\n", data.tof2);
+  Serial.printf("Force1: %.2f\n", data.force1);
+  Serial.printf("Force2: %.2f\n", data.force2);
+  Serial.printf("Weight1: %.2f\n", data.weight1);
+  Serial.printf("Weight2: %.2f\n", data.weight2);
+  Serial.printf("Turbidity1: %.2f\n", data.turbidity1);
+  Serial.printf("Turbidity2: %.2f\n", data.turbidity2);
+  Serial.printf("Ultrasonic1: %.2f cm\n", data.ultrasonic1);
+  Serial.printf("Ultrasonic2: %.2f cm\n", data.ultrasonic2);
+  
+  Serial.println("\n=== Status Summary ===");
+  Serial.printf("Device Status: %s - %s\n", data.device.status.c_str(), data.device.message.c_str());
+  Serial.printf("Module Status: %s - %s\n", data.module.status.c_str(), data.module.message.c_str());
+}
+
 void setup()
 {
   Serial.begin(115200);
@@ -462,6 +701,12 @@ void setup()
     // Could enter setup mode again or continue with default values
   }
   
+  // Initialize sensors
+  initializeSensors();
+  
+  // Send initial data to mark device as online
+  SensorData initialData = readAllSensors();
+  logDataToSupabase(initialData);
   
   Serial.println("=== Setup Complete ===");
   Serial.println("Starting data logging loop...\n");
@@ -504,6 +749,24 @@ void loop()
       initializeModem();
       delay(5000);
       return;
+    }
+    
+    // Read all sensors
+    SensorData sensorData = readAllSensors();
+    
+    // Print sensor data to console
+    printSensorData(sensorData);
+    
+    // Log to Supabase (this will automatically update device status via trigger)
+    bool success = logDataToSupabase(sensorData);
+    
+    if (success)
+    {
+      Serial.printf("✓ %s data logging cycle completed successfully!\n", deviceName.c_str());
+    }
+    else
+    {
+      Serial.printf("✗ %s data logging failed. Will retry next cycle.\n", deviceName.c_str());
     }
     
     lastDataLog = currentTime;
