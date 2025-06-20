@@ -1,4 +1,5 @@
-#pragma once
+// Debug configuration - uncomment to enable testing
+// #define TEST
 
 // Sensor Node Configuration
 #define FORCE0_ANALOG_PIN 35
@@ -10,6 +11,12 @@
 #define TURBIDITY_ANALOG_PIN 32
 #define ULTRASONIC_TRIG_PIN 25
 #define ULTRASONIC_ECHO_PIN 26
+
+//Support A7670X/A7608X/SIM7670G
+#define TINY_GSM_MODEM_A76XXSSL 
+
+// API Configuration
+#define ESP32_API_KEY "smart-echo-drain-esp32-2025-secure-key"
 
 // Supabase Configuration
 #define SUPABASE_URL "https://mpsrepfjrnjaciobvdrh.supabase.co"

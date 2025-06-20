@@ -3,13 +3,20 @@
 #include <EEPROM.h>
 #include <ArduinoJson.h>
 
-DeviceSetup::DeviceSetup(const String& deviceId, Supabase* database) 
-  : setupMode(false), setupCompleted(false), deviceId(deviceId), db(database) {
+DeviceSetup::DeviceSetup(const String& deviceId, TinyGsm* modem_ref, TinyGsmClientSecure* client_ref) 
+  : setupMode(false), setupCompleted(false), deviceId(deviceId), 
+    modem(modem_ref), client(client_ref), modemInitialized(false) {
   server = new WebServer(80);
+  
+  // Initialize database connections
+  deviceDB = new DeviceDB(modem, client);
+  addressDB = new AddressDB(modem, client);
 }
 
 DeviceSetup::~DeviceSetup() {
   delete server;
+  delete deviceDB;
+  delete addressDB;
 }
 
 bool DeviceSetup::isSetupCompleted() {
@@ -36,18 +43,191 @@ void DeviceSetup::resetSetupFlag() {
   EEPROM.end();
 }
 
+bool DeviceSetup::initializeModemForSetup() {
+  Serial.println("\n=== Initializing Modem for Setup ===");
+  
+  // Initialize Serial for modem
+  SerialAT.begin(115200, SERIAL_8N1, MODEM_RX_PIN, MODEM_TX_PIN);
+
+#ifdef BOARD_POWERON_PIN
+  pinMode(BOARD_POWERON_PIN, OUTPUT);
+  digitalWrite(BOARD_POWERON_PIN, HIGH);
+  Serial.println("Modem power enabled");
+#endif
+
+#ifdef MODEM_RESET_PIN
+  pinMode(MODEM_RESET_PIN, OUTPUT);
+  digitalWrite(MODEM_RESET_PIN, !MODEM_RESET_LEVEL);
+  delay(100);
+  digitalWrite(MODEM_RESET_PIN, MODEM_RESET_LEVEL);
+  delay(2600);
+  digitalWrite(MODEM_RESET_PIN, !MODEM_RESET_LEVEL);
+  Serial.println("Modem reset completed");
+#endif
+
+  // Power key sequence
+  pinMode(BOARD_PWRKEY_PIN, OUTPUT);
+  digitalWrite(BOARD_PWRKEY_PIN, LOW);
+  delay(100);
+  digitalWrite(BOARD_PWRKEY_PIN, HIGH);
+  delay(100);
+  digitalWrite(BOARD_PWRKEY_PIN, LOW);
+  
+  Serial.println("Starting modem initialization...");
+
+  // Test AT communication with timeout
+  int retry = 0;
+  bool modemReady = false;
+  while (!modemReady && retry < 20) {
+    if (modem->testAT(1000)) {
+      modemReady = true;
+      Serial.println("Modem AT communication established");
+    } else {
+      Serial.print(".");
+      retry++;
+      if (retry % 10 == 0) {
+        // Re-trigger power key if not responding
+        digitalWrite(BOARD_PWRKEY_PIN, LOW);
+        delay(100);
+        digitalWrite(BOARD_PWRKEY_PIN, HIGH);
+        delay(1000);
+        digitalWrite(BOARD_PWRKEY_PIN, LOW);
+      }
+      delay(500);
+    }
+  }
+  
+  if (!modemReady) {
+    Serial.println("Failed to establish modem communication");
+    return false;
+  }
+
+  // Check SIM card with timeout
+  Serial.println("Checking SIM card...");
+  SimStatus sim = SIM_ERROR;
+  int simRetry = 0;
+  while (sim != SIM_READY && simRetry < 30) {
+    sim = modem->getSimStatus();
+    switch (sim) {
+    case SIM_READY:
+      Serial.println("SIM card ready");
+      break;
+    case SIM_LOCKED:
+      Serial.println("SIM card locked");
+      return false;
+    default:
+      Serial.print(".");
+      simRetry++;
+      delay(1000);
+      break;
+    }
+  }
+  
+  if (sim != SIM_READY) {
+    Serial.println("SIM card not ready after timeout");
+    return false;
+  }
+
+#ifndef TINY_GSM_MODEM_SIM7672
+  if (!modem->setNetworkMode(MODEM_NETWORK_AUTO)) {
+    Serial.println("Failed to set network mode");
+  }
+#endif
+
+  // Wait for network registration with timeout
+  Serial.println("Waiting for network registration...");
+  RegStatus status = REG_NO_RESULT;
+  int netRetry = 0;
+  while ((status == REG_NO_RESULT || status == REG_SEARCHING || status == REG_UNREGISTERED) && netRetry < 60) {
+    status = modem->getRegistrationStatus();
+    switch (status) {
+    case REG_UNREGISTERED:
+    case REG_SEARCHING:
+      Serial.print(".");
+      netRetry++;
+      delay(2000);
+      break;
+    case REG_DENIED:
+      Serial.println("Network registration denied");
+      return false;
+    case REG_OK_HOME:
+      Serial.println("Registered on home network");
+      break;
+    case REG_OK_ROAMING:
+      Serial.println("Registered on roaming network");
+      break;
+    default:
+      netRetry++;
+      delay(1000);
+      break;
+    }
+  }
+  
+  if (status != REG_OK_HOME && status != REG_OK_ROAMING) {
+    Serial.println("Network registration failed");
+    return false;
+  }
+
+  if (!modem->setNetworkActive()) {
+    Serial.println("Failed to activate network");
+    return false;
+  }
+
+  String ipAddress = modem->getLocalIP();
+  Serial.printf("Modem IP: %s\n", ipAddress.c_str());
+  
+  Serial.println("✓ Modem initialized for setup mode");
+  modemInitialized = true;
+  return true;
+}
+
+void DeviceSetup::checkModemConnection() {
+  if (modemInitialized && !modem->isNetworkConnected()) {
+    Serial.println("Network connection lost during setup. Attempting reconnection...");
+    modemInitialized = false;
+    
+    // Try to reconnect
+    if (initializeModemForSetup()) {
+      Serial.println("Modem reconnected successfully");
+    } else {
+      Serial.println("Failed to reconnect modem");
+    }
+  }
+}
+
 void DeviceSetup::handleAddressData() {
   if (server->method() == HTTP_GET) {
+    if (!modemInitialized) {
+      Serial.println("Modem not initialized for address data request");
+      server->send(500, "application/json", "{\"error\":\"Modem not ready\"}");
+      return;
+    }
+    
     String regCode = server->arg("reg_code");
     String provCode = server->arg("prov_code");
     String cityMunCode = server->arg("citymun_code");
     
-    // Create AddressDB instance temporarily for RPC call
-    AddressDB* addressDB = new AddressDB(db);
-    String result = addressDB->getAddressDropdownData(regCode, provCode, cityMunCode);
-    delete addressDB;
+    Serial.printf("Address data request: reg=%s, prov=%s, city=%s\n", 
+                  regCode.c_str(), provCode.c_str(), cityMunCode.c_str());
     
-    server->send(200, "application/json", result);
+    String result = addressDB->getAddressDropdownData(regCode, provCode, cityMunCode);
+    
+    // Parse the response to check if it's valid
+    JsonDocument doc;
+    deserializeJson(doc, result);
+    
+    if (result.isEmpty() || result == "null" || result == "{}" || !doc["success"].as<bool>()) {
+      server->send(500, "application/json", "{\"error\":\"Failed to fetch address data\"}");
+    } else {
+      // Return the data part of the response for the frontend
+      if (doc.containsKey("data")) {
+        String dataJson;
+        serializeJson(doc["data"], dataJson);
+        server->send(200, "application/json", dataJson);
+      } else {
+        server->send(500, "application/json", "{\"error\":\"Invalid response format\"}");
+      }
+    }
   } else {
     server->send(405, "text/plain", "Method Not Allowed");
   }
@@ -80,9 +260,13 @@ void DeviceSetup::handleRoot() {
         .success { background: #d4edda; color: #155724; border: 2px solid #c3e6cb; }
         .error { background: #f8d7da; color: #721c24; border: 2px solid #f5c6cb; }
         .loading { background: #fff3cd; color: #856404; border: 2px solid #ffeaa7; }
+        .warning { background: #fff3cd; color: #856404; border: 2px solid #ffeaa7; }
         .address-section { background: #f8f9fa; padding: 20px; border-radius: 10px; margin: 20px 0; }
         .progress-bar { width: 100%; height: 4px; background: #eee; border-radius: 2px; margin-bottom: 20px; overflow: hidden; }
         .progress-fill { height: 100%; background: linear-gradient(90deg, #667eea, #764ba2); transition: width 0.5s ease; }
+        .modem-status { padding: 10px; border-radius: 5px; margin-bottom: 20px; font-size: 14px; }
+        .modem-ready { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .modem-error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
     </style>
 </head>
 <body>
@@ -94,15 +278,19 @@ void DeviceSetup::handleRoot() {
             <div class="progress-fill" id="progressFill" style="width: 0%"></div>
         </div>
         
+        <div id="modemStatus" class="modem-status modem-error">
+            📡 Initializing cellular connection... Please wait.
+        </div>
+        
         <div class="device-info">
             <h3>📱 Device Information</h3>
             <strong>Device ID:</strong> )" + deviceId + R"(<br>
             <strong>Firmware:</strong> )" + String(DEVICE_VERSION) + R"(<br>
             <strong>Chip:</strong> )" + ESP.getChipModel() + R"(<br>
-            <strong>Temperature:</strong> )" + temperatureRead() + R"(&#8451;<br>
+            <strong>Temperature:</strong> )" + temperatureRead() + R"(°C
         </div>
 
-        <form id="setupForm">
+        <form id="setupForm" style=")" + (modemInitialized ? "" : "opacity: 0.5; pointer-events: none;") + R"(">
             <div class="form-group">
                 <label for="deviceName">🏷️ Device Name:</label>
                 <input type="text" id="deviceName" name="deviceName" required 
@@ -183,7 +371,7 @@ void DeviceSetup::handleRoot() {
                 </div>
             </div>
             
-            <button type="submit" id="submitBtn">🚀 Complete Setup</button>
+            <button type="submit" id="submitBtn" disabled>🚀 Complete Setup</button>
         </form>
         
         <div id="status" class="status" style="display: none;"></div>
@@ -192,11 +380,51 @@ void DeviceSetup::handleRoot() {
     <script>
         let addressData = { regions: [], provinces: [], cities: [], barangays: [] };
         let selectedCodes = { region: '', province: '', municipality: '', barangay: '' };
+        let modemReady = )" + (modemInitialized ? "true" : "false") + R"(;
+        
+        // Check modem status periodically
+        function checkModemStatus() {
+            fetch('/modem_status')
+                .then(response => response.json())
+                .then(data => {
+                    const statusDiv = document.getElementById('modemStatus');
+                    const setupForm = document.getElementById('setupForm');
+                    const submitBtn = document.getElementById('submitBtn');
+                    
+                    if (data.ready) {
+                        statusDiv.className = 'modem-status modem-ready';
+                        statusDiv.innerHTML = '✅ Cellular connection established. Ready for setup.';
+                        setupForm.style.opacity = '1';
+                        setupForm.style.pointerEvents = 'auto';
+                        modemReady = true;
+                        
+                        // Load regions once modem is ready
+                        if (!addressData.regions.length) {
+                            loadRegions();
+                        }
+                        
+                        updateSubmitButton();
+                    } else {
+                        statusDiv.className = 'modem-status modem-error';
+                        statusDiv.innerHTML = '📡 ' + (data.message || 'Establishing cellular connection...');
+                        setupForm.style.opacity = '0.5';
+                        setupForm.style.pointerEvents = 'none';
+                        modemReady = false;
+                        submitBtn.disabled = true;
+                    }
+                })
+                .catch(error => {
+                    console.error('Error checking modem status:', error);
+                });
+        }
         
         // Initialize form
         document.addEventListener('DOMContentLoaded', function() {
-            loadRegions();
             updateProgress();
+            
+            // Check modem status every 5 seconds
+            setInterval(checkModemStatus, 5000);
+            checkModemStatus(); // Initial check
             
             // Add event listeners for cascading dropdowns
             document.getElementById('region').addEventListener('change', handleRegionChange);
@@ -215,6 +443,10 @@ void DeviceSetup::handleRoot() {
                 if (cityMunCode) params.append('citymun_code', cityMunCode);
                 
                 const response = await fetch('/address_data?' + params.toString());
+                if (!response.ok) {
+                    throw new Error('Failed to fetch address data');
+                }
+                
                 const data = await response.json();
                 
                 addressData = {
@@ -232,6 +464,8 @@ void DeviceSetup::handleRoot() {
         }
         
         async function loadRegions() {
+            if (!modemReady) return;
+            
             const data = await loadAddressData();
             populateSelect('region', data.regions, 'reg_code', 'reg_desc');
         }
@@ -337,6 +571,7 @@ void DeviceSetup::handleRoot() {
             ].filter(part => part && part.trim() !== '');
             
             document.getElementById('fullAddress').value = addressParts.join(', ');
+            updateProgress();
         }
         
         function updateProgress() {
@@ -348,6 +583,19 @@ void DeviceSetup::handleRoot() {
             
             const progress = (filledFields.length / requiredFields.length) * 100;
             document.getElementById('progressFill').style.width = progress + '%';
+            
+            updateSubmitButton();
+        }
+        
+        function updateSubmitButton() {
+            const submitBtn = document.getElementById('submitBtn');
+            const requiredFields = ['deviceName', 'region', 'province', 'municipality', 'barangay', 'street', 'postalCode', 'email', 'password'];
+            const allFieldsFilled = requiredFields.every(fieldId => {
+                const field = document.getElementById(fieldId);
+                return field && field.value.trim() !== '';
+            });
+            
+            submitBtn.disabled = !modemReady || !allFieldsFilled;
         }
         
         // Add input listeners for progress tracking
@@ -355,6 +603,11 @@ void DeviceSetup::handleRoot() {
         
         document.getElementById('setupForm').addEventListener('submit', async function(e) {
             e.preventDefault();
+            
+            if (!modemReady) {
+                alert('Please wait for cellular connection to be established.');
+                return;
+            }
             
             const formData = new FormData(e.target);
             const submitBtn = document.getElementById('submitBtn');
@@ -413,6 +666,17 @@ void DeviceSetup::handleRoot() {
 
 void DeviceSetup::handleSetup() {
   if (server->method() == HTTP_POST) {
+    if (!modemInitialized) {
+      JsonDocument errorResponse;
+      errorResponse["success"] = false;
+      errorResponse["message"] = "Cellular connection not ready";
+      
+      String errorStr;
+      serializeJson(errorResponse, errorStr);
+      server->send(500, "application/json", errorStr);
+      return;
+    }
+    
     String body = server->arg("plain");
     JsonDocument doc;
     deserializeJson(doc, body);
@@ -435,28 +699,69 @@ void DeviceSetup::handleSetup() {
     Serial.println("Street: " + deviceStreet);
     Serial.println("Postal Code: " + devicePostalCode);
     Serial.println("Full Address: " + fullAddress);
+    Serial.println("Admin Email: " + email);
     
     // Store device location
     deviceLocation = fullAddress;
     
-    // TODO: Complete device setup via database
-    // This would involve:
-    // 1. Authenticating admin user
-    // 2. Creating device record with proper address structure
-    // 3. Linking device to admin user
+    // Attempt to authenticate admin user and create device record
+    Serial.println("Authenticating admin user...");
+    int loginResult = deviceDB->authenticateUser(email, password);
     
-    markSetupCompleted();
-    
-    JsonDocument response;
-    response["success"] = true;
-    response["message"] = "Device setup completed successfully";
-    response["device_id"] = deviceId;
-    response["device_name"] = deviceName;
-    response["full_location"] = fullAddress;
-    
-    String responseStr;
-    serializeJson(response, responseStr);
-    server->send(200, "application/json", responseStr);
+    if (loginResult == 200) {
+      Serial.println("✓ Admin authentication successful");
+      
+      // Create address location object
+      AddressLocation address = createAddress(
+        "PH", "PHILIPPINES",
+        regionCode, doc["region"].as<String>(),
+        provinceCode, doc["province"].as<String>(),
+        municipalityCode, doc["municipality"].as<String>(),
+        barangayCode, doc["barangay"].as<String>(),
+        devicePostalCode, deviceStreet
+      );
+      
+      // Create device record
+      Device device = createDevice(deviceId, deviceName, "", address, false, true, DEVICE_VERSION);
+      
+      int createResult = deviceDB->createDevice(device);
+      
+      if (createResult == 200 || createResult == 201) {
+        Serial.println("✓ Device record created successfully");
+        markSetupCompleted();
+        
+        JsonDocument response;
+        response["success"] = true;
+        response["message"] = "Device setup completed successfully";
+        response["device_id"] = deviceId;
+        response["device_name"] = deviceName;
+        response["full_location"] = fullAddress;
+        
+        String responseStr;
+        serializeJson(response, responseStr);
+        server->send(200, "application/json", responseStr);
+      } else {
+        Serial.printf("✗ Failed to create device record. HTTP Code: %d\n", createResult);
+        
+        JsonDocument response;
+        response["success"] = false;
+        response["message"] = "Failed to create device record in database";
+        
+        String responseStr;
+        serializeJson(response, responseStr);
+        server->send(500, "application/json", responseStr);
+      }
+    } else {
+      Serial.printf("✗ Admin authentication failed. HTTP Code: %d\n", loginResult);
+      
+      JsonDocument response;
+      response["success"] = false;
+      response["message"] = "Invalid admin credentials or database connection failed";
+      
+      String responseStr;
+      serializeJson(response, responseStr);
+      server->send(401, "application/json", responseStr);
+    }
   } else {
     server->send(405, "text/plain", "Method Not Allowed");
   }
@@ -477,6 +782,7 @@ void DeviceSetup::startSetupMode() {
   Serial.println("\n=== Starting Setup Mode ===");
   setupMode = true;
   
+  // Start WiFi AP for setup interface
   WiFi.mode(WIFI_AP);
   WiFi.softAP(SETUP_SSID, SETUP_PASSWORD);
   
@@ -484,10 +790,28 @@ void DeviceSetup::startSetupMode() {
   Serial.printf("Password: %s\n", SETUP_PASSWORD);
   Serial.printf("IP Address: %s\n", WiFi.softAPIP().toString().c_str());
   
+  // Initialize modem in background for database access
+  Serial.println("Initializing cellular modem for database access...");
+  if (initializeModemForSetup()) {
+    Serial.println("✓ Cellular modem ready for setup operations");
+  } else {
+    Serial.println("✗ Cellular modem initialization failed - setup will continue without database access");
+  }
+  
+  // Setup web server routes
   server->on("/", [this]() { handleRoot(); });
   server->on("/setup", [this]() { handleSetup(); });
   server->on("/restart", [this]() { handleRestart(); });
   server->on("/address_data", [this]() { handleAddressData(); });
+  server->on("/modem_status", [this]() { 
+    JsonDocument status;
+    status["ready"] = modemInitialized;
+    status["message"] = modemInitialized ? "Connected" : "Connecting to cellular network...";
+    
+    String statusStr;
+    serializeJson(status, statusStr);
+    server->send(200, "application/json", statusStr);
+  });
   
   server->begin();
   Serial.println("Setup web server started");
@@ -498,6 +822,13 @@ void DeviceSetup::loop() {
   if (setupMode && !setupCompleted) {
     server->handleClient();
     
+    // Check modem connection periodically
+    static unsigned long lastModemCheck = 0;
+    if (millis() - lastModemCheck > 10000) { // Check every 10 seconds
+      checkModemConnection();
+      lastModemCheck = millis();
+    }
+    
     static unsigned long setupStartTime = millis();
     if (millis() - setupStartTime > SETUP_TIMEOUT) {
       Serial.println("Setup timeout reached. Restarting...");
@@ -507,9 +838,14 @@ void DeviceSetup::loop() {
 }
 
 bool DeviceSetup::checkDeviceSetupStatus() {
-  Serial.println("Checking device setup status...");
+  if (!modemInitialized) {
+    Serial.println("Modem not initialized - cannot check database setup status");
+    return false;
+  }
   
-  String checkResult = db->rpc("check_device_setup", "{\"device_id\":\"" + deviceId + "\"}");
+  Serial.println("Checking device setup status via API...");
+  
+  String checkResult = deviceDB->checkDeviceSetup(deviceId);
   Serial.println("Setup check result: " + checkResult);
   
   JsonDocument doc;
@@ -526,4 +862,20 @@ bool DeviceSetup::checkDeviceSetupStatus() {
   
   Serial.println("✗ Device setup required");
   return false;
+}
+
+String DeviceSetup::getDeviceName() const { 
+  return deviceName; 
+}
+
+String DeviceSetup::getDeviceLocation() const { 
+  return deviceLocation; 
+}
+
+bool DeviceSetup::isInSetupMode() const { 
+  return setupMode && !setupCompleted; 
+}
+
+bool DeviceSetup::isModemReady() const { 
+  return modemInitialized; 
 }

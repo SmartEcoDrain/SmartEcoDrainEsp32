@@ -1,16 +1,19 @@
-#ifndef DEVICE_DB_H
-#define DEVICE_DB_H
+#pragma once
 
 #include <Arduino.h>
 #include "device.h"
-#include "../TinyGSMSupabase/supabase.h"
+#include <TinyGsmClient.h>
+#include <ArduinoHttpClient.h>
 
 class DeviceDB {
 private:
-  Supabase* db;
+  TinyGsm* modem;
+  TinyGsmClientSecure* client;
+  HttpClient* httpClient;
 
 public:
-  DeviceDB(Supabase* database);
+  DeviceDB(TinyGsm* modem_ref, TinyGsmClientSecure* client_ref);
+  ~DeviceDB();
   
   // Device CRUD operations
   int createDevice(const Device& device);
@@ -29,9 +32,12 @@ public:
   int updateDeviceStatus(const String& deviceId, bool isOnline);
   int updateDeviceLocation(const String& deviceId, const AddressLocation& location);
   
+  // Authentication and setup
+  int authenticateUser(const String& email, const String& password);
+  String checkDeviceSetup(const String& deviceId);
+  int sendHeartbeat(const String& deviceId);
+  
   // Utility functions
   Device parseDeviceFromResponse(const String& response);
   DeviceData parseDeviceDataFromResponse(const String& response);
 };
-
-#endif

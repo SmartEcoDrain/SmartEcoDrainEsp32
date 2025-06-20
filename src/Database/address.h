@@ -1,9 +1,10 @@
-#ifndef ADDRESS_DB_H
-#define ADDRESS_DB_H
+#pragma once
 
+#include "../configs.h"
 #include <Arduino.h>
 #include <ArduinoJson.h>
-#include "../TinyGSMSupabase/supabase.h"
+#include <TinyGsmClient.h>
+#include <ArduinoHttpClient.h>
 
 struct Country {
   String code;
@@ -41,15 +42,18 @@ struct AddressLocation {
   String fullAddress;
 };
 
-// Database functions using RPC
-class AddressDB {
+// Database functions using API endpoints
+class AddressDB {  
 private:
-  Supabase* db;
+  TinyGsm* modem;
+  TinyGsmClientSecure* client;
+  HttpClient* httpClient;
 
 public:
-  AddressDB(Supabase* database);
-  
-  // Use RPC function for efficient address data retrieval
+  AddressDB(TinyGsm* modem_ref, TinyGsmClientSecure* client_ref);
+  ~AddressDB();
+
+  // Use API endpoint for efficient address data retrieval
   String getAddressDropdownData(const String& regCode = "", const String& provCode = "", const String& cityMunCode = "");
   
   // Individual getters (legacy support)
@@ -77,5 +81,3 @@ AddressLocation createAddress(const String& countryCode, const String& countryDe
                               const String& municipalityCode, const String& municipalityDesc,
                               const String& barangayCode, const String& barangayDesc,
                               const String& postalCode, const String& street);
-
-#endif

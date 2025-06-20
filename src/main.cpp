@@ -1,26 +1,32 @@
-#define TINY_GSM_RX_BUFFER 1024
-#define DUMP_AT_COMMANDS
-
 #include "configs.h"
 #include "Utils/utilities.h"
 #include "Utils/device_id.h"
 #include "Setup/device_setup.h"
 #include "Database/device_db.h"
-#include "Database/user_db.h"
 #include "Database/address.h"
+
+// #define DUMP_AT_COMMANDS
+
+
+#ifdef TINY_GSM_MODEM_A7670
+#undef TINY_GSM_MODEM_A7670
+#endif
+
+#ifdef TINY_GSM_MODEM_A7608
+#undef TINY_GSM_MODEM_A7608
+#endif
+
+#ifndef TINY_GSM_MODEM_A76XXSSL
+#define TINY_GSM_MODEM_A76XXSSL // Support A7670X/A7608X/SIM7670G
+#endif
+
+#define TINY_GSM_DEBUG Serial
+
+#include <TinyGsmClient.h>
+#include <ArduinoHttpClient.h>
 #include <ArduinoJson.h>
 
-// Esp32 specific includes
-#include <EEPROM.h>
-
-// Include TinyGSM Supabase library
-#include <TinyGsmClient.h>
-#include <TinyGSMSupabase/supabase.h>
-
-// Module libraries
-#include <Wire.h>
-#include <Adafruit_VL53L0X.h>
-
+// Create modem and HTTP clients
 #ifdef DUMP_AT_COMMANDS
 #include <StreamDebugger.h>
 StreamDebugger debugger(SerialAT, Serial);
@@ -29,65 +35,126 @@ TinyGsm modem(debugger);
 TinyGsm modem(SerialAT);
 #endif
 
-TinyGsmClient client(modem);
-Supabase db;
+TinyGsmClientSecure client(modem);
 
-// Global variables
+// Global objects
+DeviceSetup* deviceSetup = nullptr;
+DeviceDB* deviceDB = nullptr;
+AddressDB* addressDB = nullptr;
 String deviceId;
-DeviceSetup* deviceSetup;
-DeviceDB* deviceDB;
-UserDB* userDB;
-AddressDB* addressDB;
 
-// Sensor instances
-Adafruit_VL53L0X vl53l0x = Adafruit_VL53L0X();
+// Function declarations
+bool initializeModem();
+void testApiConnection();
 
-// Sensor data structure with separate device and module status
-struct SensorData {
-  // Device data
-  float cpuTemperature;
-  float cpuFrequency;
-  float ramUsage;
-  float storageUsage;
-  int signalStrength;
-  float batteryVoltage;
-  float batteryPercentage;
-  float solarWattage;
-  unsigned long uptime;
-  String batteryStatus;
-  String firmwareVersion;
-  bool isOnline;
-  
-  // Module data
-  float tof;
-  float force0;
-  float force1;
-  float weight;
-  float turbidity;
-  float ultrasonic;
-  
-  // Separate status tracking
-  struct {
-    String status;
-    String message;
-  } device;
-  
-  struct {
-    String status;
-    String message;
-  } module;
-};
-
-void initializeModem()
-{
+void setup() {
   Serial.begin(115200);
-  Serial.println("=== TinyGSM Supabase Data Logger ===");
+  delay(1000);
+
+  Serial.println("=== Smart Echo Drain ESP32 Starting ===");
+  Serial.printf("Device Version: %s\n", DEVICE_VERSION);
+  Serial.printf("API Key: %s\n", ESP32_API_KEY);
+  
+  // Generate or get device ID
+  deviceId = getOrGenerateDeviceId();
   Serial.printf("Device ID: %s\n", deviceId.c_str());
+
+  // Initialize device setup
+  deviceSetup = new DeviceSetup(deviceId, &modem, &client);
+
+  // Check if device setup is already completed
+  if (deviceSetup->isSetupCompleted()) {
+    Serial.println("Device setup already completed. Initializing normal operation...");
+    
+    // Initialize modem for normal operation
+    if (initializeModem()) {
+      // Initialize database connections
+      deviceDB = new DeviceDB(&modem, &client);
+      addressDB = new AddressDB(&modem, &client);
+      
+      // Test API connection
+      testApiConnection();
+      
+      // Check if device exists in database
+      if (deviceSetup->checkDeviceSetupStatus()) {
+        Serial.println("✓ Device verified in database");
+        Serial.printf("Device Name: %s\n", deviceSetup->getDeviceName().c_str());
+        Serial.printf("Location: %s\n", deviceSetup->getDeviceLocation().c_str());
+        
+        // Send initial heartbeat
+        int heartbeatResult = deviceDB->sendHeartbeat(deviceId);
+        Serial.printf("Initial heartbeat sent - Status: %d\n", heartbeatResult);
+      } else {
+        Serial.println("Device not found in database. Starting setup mode...");
+        deviceSetup->resetSetupFlag();
+        deviceSetup->startSetupMode();
+      }
+    } else {
+      Serial.println("Failed to initialize modem. Starting setup mode...");
+      deviceSetup->startSetupMode();
+    }
+  } else {
+    Serial.println("Device not configured. Starting setup mode...");
+    deviceSetup->startSetupMode();
+  }
+}
+
+void loop() {
+  if (deviceSetup && deviceSetup->isInSetupMode()) {
+    // Handle setup mode
+    deviceSetup->loop();
+  } else {
+    // Normal operation mode
+    static unsigned long lastHeartbeat = 0;
+    static unsigned long lastDataSend = 0;
+    
+    // Send heartbeat every 30 seconds
+    if (millis() - lastHeartbeat > 30000) {
+      if (deviceDB) {
+        int result = deviceDB->sendHeartbeat(deviceId);
+        Serial.printf("Heartbeat sent - Status: %d\n", result);
+      }
+      lastHeartbeat = millis();
+    }
+    
+    // Send sensor data every 5 minutes (for now just test data)
+    if (millis() - lastDataSend > 300000) {
+      if (deviceDB) {
+        // Create test device data
+        DeviceData testData;
+        testData.deviceId = deviceId;
+        // testData.timestamp = millis();
+        // testData.waterLevel = random(0, 100);
+        testData.turbidity = random(0, 1000);
+        testData.weight = random(0, 50);
+        testData.ultrasonic = random(5, 200);
+        
+        // Add some module status data
+        testData.moduleStatus["sensor"] = "online";
+        testData.moduleStatus["connectivity"] = "good";
+        testData.moduleOtherData["battery"] = String(random(70, 100));
+        testData.moduleOtherData["temperature"] = String(random(25, 35));
+        
+        int result = deviceDB->createDeviceData(testData);
+        Serial.printf("Sensor data sent - Status: %d\n", result);
+      }
+      lastDataSend = millis();
+    }
+    
+    delay(1000); // Small delay to prevent overwhelming the system
+  }
+}
+
+bool initializeModem() {
+  Serial.println("\n=== Initializing Modem ===");
+  
+  // Initialize Serial for modem
   SerialAT.begin(115200, SERIAL_8N1, MODEM_RX_PIN, MODEM_TX_PIN);
 
 #ifdef BOARD_POWERON_PIN
   pinMode(BOARD_POWERON_PIN, OUTPUT);
   digitalWrite(BOARD_POWERON_PIN, HIGH);
+  Serial.println("Modem power enabled");
 #endif
 
 #ifdef MODEM_RESET_PIN
@@ -97,365 +164,97 @@ void initializeModem()
   digitalWrite(MODEM_RESET_PIN, MODEM_RESET_LEVEL);
   delay(2600);
   digitalWrite(MODEM_RESET_PIN, !MODEM_RESET_LEVEL);
+  Serial.println("Modem reset completed");
 #endif
 
+  // Power key sequence
   pinMode(BOARD_PWRKEY_PIN, OUTPUT);
   digitalWrite(BOARD_PWRKEY_PIN, LOW);
   delay(100);
   digitalWrite(BOARD_PWRKEY_PIN, HIGH);
   delay(100);
   digitalWrite(BOARD_PWRKEY_PIN, LOW);
+  
+  Serial.println("Starting modem initialization...");
 
-  Serial.println("Starting modem...");
-
-  int retry = 0;
-  while (!modem.testAT(1000))
-  {
-    Serial.print(".");
-    if (retry++ > 10)
-    {
-      digitalWrite(BOARD_PWRKEY_PIN, LOW);
-      delay(100);
-      digitalWrite(BOARD_PWRKEY_PIN, HIGH);
-      delay(1000);
-      digitalWrite(BOARD_PWRKEY_PIN, LOW);
-      retry = 0;
-    }
+  // Test modem communication
+  if (!modem.testAT(10000)) {
+    Serial.println("Failed to connect to modem");
+    return false;
   }
-  Serial.println(" Modem ready!");
+  Serial.println("Modem connection established");
 
   // Check SIM card
-  SimStatus sim = SIM_ERROR;
-  while (sim != SIM_READY)
-  {
-    sim = modem.getSimStatus();
-    switch (sim)
-    {
-    case SIM_READY:
-      Serial.println("SIM card online");
-      break;
-    case SIM_LOCKED:
-      Serial.println("SIM card locked. Please unlock first.");
-      break;
-    default:
-      Serial.println("SIM card not ready");
-      break;
-    }
-    delay(1000);
+  SimStatus sim = modem.getSimStatus();
+  if (sim != SIM_READY) {
+    Serial.println("SIM card not ready");
+    return false;
   }
-
-#ifndef TINY_GSM_MODEM_SIM7672
-  if (!modem.setNetworkMode(MODEM_NETWORK_AUTO))
-  {
-    Serial.println("Set network mode failed!");
-  }
-#endif
+  Serial.println("SIM card ready");
 
   // Wait for network registration
-  Serial.print("Waiting for network registration...");
-  RegStatus status = REG_NO_RESULT;
-  while (status == REG_NO_RESULT || status == REG_SEARCHING || status == REG_UNREGISTERED)
-  {
-    status = modem.getRegistrationStatus();
-    switch (status)
-    {
-    case REG_UNREGISTERED:
-    case REG_SEARCHING:
-      Serial.print(".");
-      delay(1000);
-      break;
-    case REG_DENIED:
-      Serial.println("Network registration denied!");
-      return;
-    case REG_OK_HOME:
-      Serial.println("Registered on home network");
-      break;
-    case REG_OK_ROAMING:
-      Serial.println("Registered on roaming network");
-      break;
-    default:
-      delay(1000);
-      break;
-    }
+  if (!modem.waitForNetwork(60000)) {
+    Serial.println("Failed to connect to network");
+    return false;
   }
+  Serial.println("Connected to cellular network");
 
-  if (!modem.setNetworkActive())
-  {
-    Serial.println("Enable network failed!");
+  // Connect to GPRS
+  if (!modem.gprsConnect("internet")) { // Use your APN here
+    Serial.println("Failed to connect to GPRS");
+    return false;
   }
+  Serial.println("GPRS connected");
 
   String ipAddress = modem.getLocalIP();
-  Serial.print("Local IP: ");
-  Serial.println(ipAddress);
-
-  Serial.println("Modem initialization complete!");
+  Serial.printf("Modem IP: %s\n", ipAddress.c_str());
+  
+  return true;
 }
 
-void initializeSensors() {
-  Serial.println("Initializing sensors...");
+void testApiConnection() {
+  Serial.println("\n=== Testing API Connection ===");
   
-  Wire.begin();
-  
-  // Initialize VL53L0X TOF sensor
-  if (!vl53l0x.begin()) {
-    Serial.println("Failed to boot VL53L0X");
-  } else {
-    Serial.println("VL53L0X sensor initialized");
-  }
-  
-  // Initialize other sensors here
-  Serial.println("Sensor initialization complete!");
-}
-
-SensorData readSensorData() {
-  SensorData data;
-  
-  // Read device data
-  data.cpuTemperature = temperatureRead();
-  data.cpuFrequency = ESP.getCpuFreqMHz();
-  data.ramUsage = (ESP.getHeapSize() - ESP.getFreeHeap()) / (float)ESP.getHeapSize() * 100.0;
-  data.storageUsage = 0; // TODO: Calculate storage usage
-  data.signalStrength = modem.getSignalQuality();
-  data.batteryVoltage = 3.7; // TODO: Read actual battery voltage
-  data.batteryPercentage = 85; // TODO: Calculate battery percentage
-  data.solarWattage = 0; // TODO: Read solar panel wattage
-  data.uptime = millis();
-  data.batteryStatus = "NORMAL";
-  data.firmwareVersion = DEVICE_VERSION;
-  data.isOnline = modem.isNetworkConnected();
-  
-  // Set device status based on readings
-  if (data.cpuTemperature > 80) {
-    data.device.status = "WARNING";
-    data.device.message = "High CPU temperature detected";
-  } else if (data.batteryPercentage < 20) {
-    data.device.status = "WARNING";
-    data.device.message = "Low battery level";
-  } else if (!data.isOnline) {
-    data.device.status = "ERROR";
-    data.device.message = "Network disconnected";
-  } else {
-    data.device.status = "NORMAL";
-    data.device.message = "All systems operational";
-  }
-  
-  // Read module data
-  VL53L0X_RangingMeasurementData_t measure;
-  vl53l0x.rangingTest(&measure, false);
-  
-  if (measure.RangeStatus != 4) {
-    data.tof = measure.RangeMilliMeter;
-    data.module.status = "NORMAL";
-    data.module.message = "Sensor readings normal";
-  } else {
-    data.tof = -1;
-    data.module.status = "ERROR";
-    data.module.message = "TOF sensor out of range";
-  }
-  
-  // TODO: Read other sensor values
-  data.force0 = random(0, 1000) / 10.0; // Dummy data
-  data.force1 = random(0, 1000) / 10.0; // Dummy data
-  data.weight = random(0, 5000) / 10.0; // Dummy data
-  data.turbidity = random(0, 1000) / 10.0; // Dummy data
-  data.ultrasonic = random(50, 500); // Dummy data
-  
-  return data;
-}
-
-String getTemperatureStatus(float temp) {
-  if (temp < 0) {
-    return "COLD";
-  } else if (temp < 30) {
-    return "NORMAL";
-  } else if (temp < 60) {
-    return "WARM";
-  } else if (temp < 85) {
-    return "HOT";
-  } else {
-    return "CRITICAL";
-  }
-}
-
-void logDeviceData(const SensorData& sensorData) {
-  Serial.println("\n=== Logging Device Data ===");
-  
-  // Create DeviceData structure
-  DeviceData deviceData;
-  deviceData.deviceId = deviceId;
-  
-  // Fill device data
-  deviceData.device.cpuTemperature = sensorData.cpuTemperature;
-  deviceData.device.cpuFrequency = sensorData.cpuFrequency;
-  deviceData.device.ramUsage = sensorData.ramUsage;
-  deviceData.device.storageUsage = sensorData.storageUsage;
-  deviceData.device.signalStrength = sensorData.signalStrength;
-  deviceData.device.batteryVoltage = sensorData.batteryVoltage;
-  deviceData.device.batteryPercentage = sensorData.batteryPercentage;
-  deviceData.device.solarWattage = sensorData.solarWattage;
-  deviceData.device.uptimeMs = sensorData.uptime;
-  deviceData.device.batteryStatus = sensorData.batteryStatus;
-  deviceData.device.isOnline = sensorData.isOnline;
-  
-  // Add device status
-  deviceData.device.status["status"] = sensorData.device.status;
-  deviceData.device.status["message"] = sensorData.device.message;
-  deviceData.device.status["firmware"] = sensorData.firmwareVersion;
-  deviceData.device.status["temperature_status"] = getTemperatureStatus(sensorData.cpuTemperature);
-  
-  // Fill module data
-  deviceData.module.tof = sensorData.tof;
-  deviceData.module.force0 = sensorData.force0;
-  deviceData.module.force1 = sensorData.force1;
-  deviceData.module.weight = sensorData.weight;
-  deviceData.module.turbidity = sensorData.turbidity;
-  deviceData.module.ultrasonic = sensorData.ultrasonic;
-  
-  // Add module status
-  deviceData.module.status["status"] = sensorData.module.status;
-  deviceData.module.status["message"] = sensorData.module.message;
-  
-  // Set timestamp
-  deviceData.lastUpdatedAt = String(millis());
-  
-  // Log to database using TinyGSMSupabase
-  Serial.println("Sending data to Supabase...");
-  int result = deviceDB->createDeviceData(deviceData);
-  
-  if (result == 200 || result == 201) {
-    Serial.println("✓ Data logged successfully");
-  } else {
-    Serial.printf("✗ Failed to log data. HTTP Code: %d\n", result);
-  }
-  
-  // Update device online status
-  deviceDB->updateDeviceStatus(deviceId, true);
-  
-  // Print summary
-  Serial.printf("CPU Temp: %.2f°C | Signal: %d%% | Battery: %.1f%% | TOF: %.1fmm\n",
-                sensorData.cpuTemperature,
-                sensorData.signalStrength,
-                sensorData.batteryPercentage,
-                sensorData.tof);
-}
-
-void setup()
-{
-  Serial.begin(115200);
-  Serial.println("\n=== Smart Echo Drain Device Starting ===");
-  
-  // Get or generate device ID
-  deviceId = getOrGenerateDeviceId();
-  
-  // Initialize database classes
-  deviceSetup = new DeviceSetup(deviceId, &db);
-  
-  // Check if setup is completed locally
-  bool setupCompleted = deviceSetup->isSetupCompleted();
-  
-  if (!setupCompleted) {
-    Serial.println("Setup required - Starting setup mode...");
-    deviceSetup->startSetupMode();
+  if (!addressDB) {
+    Serial.println("AddressDB not initialized");
     return;
   }
   
-  Serial.println("Setup completed - Starting normal operation...");
+  // Test address API
+  Serial.println("Testing address API...");
+  String regions = addressDB->getRegions();
   
-  // Initialize modem and network
-  initializeModem();
-  
-  // Initialize Supabase
-  Serial.println("Initializing Supabase connection...");
-  db.begin(SUPABASE_URL, SUPABASE_ANON_KEY, modem, client);
-  
-  // Initialize database classes
-  deviceDB = new DeviceDB(&db);
-  userDB = new UserDB(&db);
-  addressDB = new AddressDB(&db);
-  
-  // Initialize sensors
-  initializeSensors();
-  
-  // Check setup status in database
-  if (!deviceSetup->checkDeviceSetupStatus()) {
-    Serial.println("Database setup incomplete - requires online setup");
-    // Could enter setup mode again or continue with default values
-  }
-  
-  Serial.println("=== Setup Complete ===");
-  Serial.println("Starting data logging loop...\n");
-  Serial.printf("Device %s (%s) is now operational\n", 
-                deviceId.c_str(), 
-                deviceSetup->getDeviceName().c_str());
-  
-  // Log initial data
-  SensorData initialData = readSensorData();
-  logDeviceData(initialData);
-}
-
-void loop()
-{
-  // Handle setup mode
-  if (deviceSetup->isInSetupMode()) {
-    deviceSetup->loop();
-    return;
-  }
-  
-  static unsigned long lastDataLog = 0;
-  static unsigned long lastStatusPrint = 0;
-  static unsigned long lastSensorRead = 0;
-  
-  const unsigned long DATA_LOG_INTERVAL = 60000;      // Log data every 60 seconds
-  const unsigned long STATUS_PRINT_INTERVAL = 10000; // Print status every 10 seconds
-  const unsigned long SENSOR_READ_INTERVAL = 5000;   // Read sensors every 5 seconds
-  
-  unsigned long currentTime = millis();
-  
-  // Read sensors periodically
-  static SensorData currentSensorData;
-  if (currentTime - lastSensorRead >= SENSOR_READ_INTERVAL) {
-    currentSensorData = readSensorData();
-    lastSensorRead = currentTime;
-  }
-  
-  // Print status periodically
-  if (currentTime - lastStatusPrint >= STATUS_PRINT_INTERVAL)
-  {
-    Serial.printf("[%lu] %s (%s) | %s | Temp: %.1f°C | Signal: %d%% | Next log: %lus\n", 
-                  currentTime / 1000, 
-                  deviceId.c_str(),
-                  deviceSetup->getDeviceName().c_str(),
-                  currentSensorData.device.status.c_str(),
-                  currentSensorData.cpuTemperature,
-                  currentSensorData.signalStrength,
-                  (DATA_LOG_INTERVAL - (currentTime - lastDataLog)) / 1000);
-    lastStatusPrint = currentTime;
-  }
-  
-  // Log data periodically
-  if (currentTime - lastDataLog >= DATA_LOG_INTERVAL)
-  {
-    // Check network connection
-    if (!modem.isNetworkConnected())
-    {
-      Serial.println("Network disconnected! Attempting reconnection...");
-      initializeModem();
-      delay(5000);
-      return;
+  if (!regions.isEmpty() && regions != "[]" && regions != "{}") {
+    Serial.println("✓ Address API connection successful");
+    Serial.printf("Regions data length: %d bytes\n", regions.length());
+    
+    // Parse and show first few regions
+    JsonDocument doc;
+    deserializeJson(doc, regions);
+    if (doc.is<JsonArray>() && doc.size() > 0) {
+      Serial.printf("Found %d regions in database\n", doc.size());
+      for (int i = 0; i < min(3, (int)doc.size()); i++) {
+        JsonObject region = doc[i];
+        Serial.printf("  - %s: %s\n", 
+                      region["reg_code"].as<String>().c_str(),
+                      region["reg_desc"].as<String>().c_str());
+      }
     }
-    
-    // Log current sensor data
-    logDeviceData(currentSensorData);
-    
-    lastDataLog = currentTime;
+  } else {
+    Serial.println("✗ Address API connection failed");
+    Serial.println("Response: " + regions);
   }
   
-  // Handle critical conditions
-  if (currentSensorData.cpuTemperature > 90) {
-    Serial.println("⚠️ CRITICAL: CPU temperature too high! Entering safety mode...");
-    delay(30000); // Reduce processing to cool down
+  // Test device API if deviceDB is available
+  if (deviceDB) {
+    Serial.println("Testing device API...");
+    String deviceInfo = deviceDB->getDevice(deviceId);
+    
+    if (!deviceInfo.isEmpty() && deviceInfo != "{}" && deviceInfo.indexOf("error") == -1) {
+      Serial.println("✓ Device API connection successful");
+    } else {
+      Serial.println("✗ Device API connection failed or device not found");
+      Serial.println("Response: " + deviceInfo);
+    }
   }
-  
-  // Small delay to prevent busy waiting
-  delay(100);
 }

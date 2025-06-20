@@ -1,32 +1,91 @@
 #include "address.h"
+#include <ArduinoHttpClient.h>
 
-AddressDB::AddressDB(Supabase* database) : db(database) {}
+AddressDB::AddressDB(TinyGsm* modem_ref, TinyGsmClientSecure* client_ref) 
+  : modem(modem_ref), client(client_ref) {
+}
+
+AddressDB::~AddressDB() {
+}
 
 String AddressDB::getAddressDropdownData(const String& regCode, const String& provCode, const String& cityMunCode) {
-  JsonDocument params;
-  
-  if (regCode.isEmpty()) {
-    params["target_reg_code"] = nullptr;
-  } else {
-    params["target_reg_code"] = regCode;
+  if (!modem || !client) {
+    Serial.println("Modem or client not initialized");
+    return "{}";
+  }
+
+  String endpoint = "/api/address";
+  String params = "";
+
+  // Build query parameters
+  if (!regCode.isEmpty()) {
+    params += "reg_code=" + regCode;
+  }
+  if (!provCode.isEmpty()) {
+    if (!params.isEmpty()) params += "&";
+    params += "prov_code=" + provCode;
+  }
+  if (!cityMunCode.isEmpty()) {
+    if (!params.isEmpty()) params += "&";
+    params += "citymun_code=" + cityMunCode;
   }
   
-  if (provCode.isEmpty()) {
-    params["target_prov_code"] = nullptr;
-  } else {
-    params["target_prov_code"] = provCode;
+  if (!params.isEmpty()) {
+    endpoint += "?" + params;
   }
-  
-  if (cityMunCode.isEmpty()) {
-    params["target_citymun_code"] = nullptr;
-  } else {
-    params["target_citymun_code"] = cityMunCode;
+
+  Serial.println("Fetching address data from: " + endpoint);
+
+  HttpClient http(*client, "smart-echodrain.vercel.app", 443);
+
+  Serial.print(F("Performing HTTPS GET request... "));
+  http.connectionKeepAlive(); // Currently, this is needed for HTTPS
+  int err = http.get(endpoint);
+  if (err != 0) {
+    Serial.println(F("failed to connect"));
+    return "{\"success\":false,\"data\":{\"regions\":[],\"provinces\":[],\"cities\":[],\"barangays\":[]}}";
   }
+
+  int statusCode = http.responseStatusCode();
+  Serial.print(F("Response status code: "));
+  Serial.println(statusCode);
   
-  String paramsStr;
-  serializeJson(params, paramsStr);
+  if (!statusCode) {
+    return "{\"success\":false,\"data\":{\"regions\":[],\"provinces\":[],\"cities\":[],\"barangays\":[]}}";
+  }
+
+  Serial.println(F("Response Headers:"));
+  while (http.headerAvailable()) {
+    String headerName = http.readHeaderName();
+    String headerValue = http.readHeaderValue();
+    Serial.println("    " + headerName + " : " + headerValue);
+  }
+
+  int length = http.contentLength();
+  if (length >= 0) {
+    Serial.print(F("Content length is: "));
+    Serial.println(length);
+  }
+  if (http.isResponseChunked()) {
+    Serial.println(F("The response is chunked"));
+  }
+
+  String body = http.responseBody();
+  Serial.println(F("Response:"));
+  Serial.println(body);
+
+  Serial.print(F("Body length is: "));
+  Serial.println(body.length());
+
+  http.stop();
+  Serial.println(F("Server disconnected"));
   
-  return db->rpc("get_address_dropdown_data", paramsStr);
+  if (statusCode == 200) {
+    return body;
+  } else {
+    Serial.println("Failed to fetch address data: " + body);
+    return "{\"success\":false,\"data\":{\"regions\":[],\"provinces\":[],\"cities\":[],\"barangays\":[]}}";
+  }
 }
 
 String AddressDB::getRegions() {
@@ -35,9 +94,10 @@ String AddressDB::getRegions() {
   JsonDocument doc;
   deserializeJson(doc, result);
   
-  if (doc.containsKey("regions")) {
+  // Check if response has success flag and data structure
+  if (doc["success"].as<bool>() && doc.containsKey("data") && doc["data"].containsKey("regions")) {
     String regionsJson;
-    serializeJson(doc["regions"], regionsJson);
+    serializeJson(doc["data"]["regions"], regionsJson);
     return regionsJson;
   }
   
@@ -50,9 +110,10 @@ String AddressDB::getProvinces(const String& regCode) {
   JsonDocument doc;
   deserializeJson(doc, result);
   
-  if (doc.containsKey("provinces")) {
+  // Check if response has success flag and data structure
+  if (doc["success"].as<bool>() && doc.containsKey("data") && doc["data"].containsKey("provinces")) {
     String provincesJson;
-    serializeJson(doc["provinces"], provincesJson);
+    serializeJson(doc["data"]["provinces"], provincesJson);
     return provincesJson;
   }
   
@@ -65,9 +126,10 @@ String AddressDB::getMunicipalities(const String& provCode) {
   JsonDocument doc;
   deserializeJson(doc, result);
   
-  if (doc.containsKey("cities")) {
+  // Check if response has success flag and data structure
+  if (doc["success"].as<bool>() && doc.containsKey("data") && doc["data"].containsKey("cities")) {
     String citiesJson;
-    serializeJson(doc["cities"], citiesJson);
+    serializeJson(doc["data"]["cities"], citiesJson);
     return citiesJson;
   }
   
@@ -80,9 +142,10 @@ String AddressDB::getBarangays(const String& cityMunCode) {
   JsonDocument doc;
   deserializeJson(doc, result);
   
-  if (doc.containsKey("barangays")) {
+  // Check if response has success flag and data structure
+  if (doc["success"].as<bool>() && doc.containsKey("data") && doc["data"].containsKey("barangays")) {
     String barangaysJson;
-    serializeJson(doc["barangays"], barangaysJson);
+    serializeJson(doc["data"]["barangays"], barangaysJson);
     return barangaysJson;
   }
   
@@ -122,9 +185,9 @@ AddressLocation AddressDB::parseAddressFromJSON(const JsonObject& obj) {
     address.barangay.desc = barangay["desc"].as<String>();
   }
   
-  address.postalCode = obj["postalCode"].as<String>();
+  address.postalCode = obj["postal_code"].as<String>();
   address.street = obj["street"].as<String>();
-  address.fullAddress = obj["fullAddress"].as<String>();
+  address.fullAddress = obj["full_address"].as<String>();
   
   // Build full address if not provided
   if (address.fullAddress.isEmpty()) {
@@ -169,11 +232,11 @@ JsonDocument AddressDB::createAddressJSONObject(const AddressLocation& address) 
   JsonObject barangay = doc["barangay"].to<JsonObject>();
   barangay["code"] = address.barangay.code;
   barangay["desc"] = address.barangay.desc;
-  
-  doc["postalCode"] = address.postalCode;
+
+  doc["postal_code"] = address.postalCode;
   doc["street"] = address.street;
-  doc["fullAddress"] = address.fullAddress.isEmpty() ? buildFullAddress(address) : address.fullAddress;
-  
+  doc["full_address"] = address.fullAddress.isEmpty() ? buildFullAddress(address) : address.fullAddress;
+
   return doc;
 }
 
@@ -233,10 +296,5 @@ AddressLocation createAddress(const String& countryCode, const String& countryDe
   address.barangay.desc = barangayDesc;
   address.postalCode = postalCode;
   address.street = street;
-  
-  // Build full address
-  AddressDB tempDB(nullptr);
-  address.fullAddress = tempDB.buildFullAddress(address);
-  
   return address;
 }

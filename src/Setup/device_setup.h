@@ -1,13 +1,33 @@
-#ifndef DEVICE_SETUP_H
-#define DEVICE_SETUP_H
+#pragma once
+
+#ifdef TINY_GSM_MODEM_A7670
+#undef TINY_GSM_MODEM_A7670
+#endif
+
+#ifdef TINY_GSM_MODEM_A7608
+#undef TINY_GSM_MODEM_A7608
+#endif
+
+// Use SecureClient
+#ifndef TINY_GSM_MODEM_A76XXSSL
+#define TINY_GSM_MODEM_A76XXSSL //Support A7670X/A7608X/SIM7670G
+#endif
+
+// See all AT commands, if wanted
+// #define DUMP_AT_COMMANDS
+
+// Define the serial console for debug prints, if needed
+#define TINY_GSM_DEBUG Serial
+
+#include <TinyGsmClient.h>
+#include <ArduinoHttpClient.h>
 
 #include <Arduino.h>
 #include <WebServer.h>
+#include "../Utils/utilities.h"
 #include "../configs.h"
-#include "../Database/device.h"
-#include "../Database/user.h"
+#include "../Database/device_db.h"
 #include "../Database/address.h"
-#include "../TinyGSMSupabase/supabase.h"
 
 class DeviceSetup {
 private:
@@ -19,16 +39,30 @@ private:
   String deviceStreet;
   String devicePostalCode;
   String deviceId;
-  Supabase* db;
+  
+  // Database connections
+  DeviceDB* deviceDB;
+  AddressDB* addressDB;
+  
+  // TinyGSM references for setup mode
+  TinyGsm* modem;
+  TinyGsmClientSecure* client;
+  bool modemInitialized;
 
   // Web handlers
   void handleRoot();
   void handleSetup();
   void handleRestart();
   void handleAddressData();
+  void handleProfilesData(); // Add this new method declaration
+  void handleRoot();
+  
+  // Modem initialization
+  bool initializeModemForSetup();
+  void checkModemConnection();
 
 public:
-  DeviceSetup(const String& deviceId, Supabase* database);
+  DeviceSetup(const String& deviceId, TinyGsm* modem_ref, TinyGsmClientSecure* client_ref);
   ~DeviceSetup();
   
   bool isSetupCompleted();
@@ -39,9 +73,8 @@ public:
   bool checkDeviceSetupStatus();
   
   // Getters
-  String getDeviceName() const { return deviceName; }
-  String getDeviceLocation() const { return deviceLocation; }
-  bool isInSetupMode() const { return setupMode && !setupCompleted; }
+  String getDeviceName() const;
+  String getDeviceLocation() const;
+  bool isInSetupMode() const;
+  bool isModemReady() const;
 };
-
-#endif
