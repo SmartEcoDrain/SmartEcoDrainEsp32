@@ -5,12 +5,15 @@
 String generateUUID() {
   String uuid = "";
   
-  for (int i = 0; i < 32; i++) {
-    if (i == 8 || i == 12 || i == 16 || i == 20) {
+  for (int i = 0; i < 16; i++) {
+    uint8_t randomByte = esp_random() & 0xFF;
+    
+    // Add hyphens at the correct positions (after 4, 6, 8, 10 bytes)
+    if (i == 4 || i == 6 || i == 8 || i == 10) {
       uuid += "-";
     }
     
-    uint8_t randomByte = esp_random() & 0xFF;
+    // Format byte as 2-digit hex
     if (randomByte < 16) {
       uuid += "0";
     }

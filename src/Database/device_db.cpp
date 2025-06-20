@@ -11,6 +11,9 @@ DeviceDB::~DeviceDB() {
 
 int DeviceDB::createDevice(const Device& device) {
   String deviceJson = createDeviceJSON(device);
+
+  Serial.println(F("Creating device JSON:"));
+  Serial.println(deviceJson);
   
   HttpClient http(*client, "smart-echodrain.vercel.app", 443);
 
@@ -493,7 +496,7 @@ String DeviceDB::checkDeviceSetup(const String& deviceId) {
 
 int DeviceDB::sendHeartbeat(const String& deviceId) {
   JsonDocument heartbeatDoc;
-  heartbeatDoc["device_id"] = deviceId;
+  heartbeatDoc["uuid"] = deviceId;
   heartbeatDoc["last_seen"] = millis();
   heartbeatDoc["status"] = "online";
   

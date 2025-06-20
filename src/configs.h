@@ -1,5 +1,14 @@
-// Debug configuration - uncomment to enable testing
-// #define TEST
+// EEPROM Configuration
+#define EEPROM_SIZE 512           // Total EEPROM size
+#define SETUP_FLAG_ADDR 0         // Address for setup completion flag (uses 2 bytes)
+#define DEVICE_DATA_ADDR 4        // Start address for other device data (if needed)
+#define SETUP_MAGIC_NUMBER 0xABCD // Magic number to verify setup completion
+
+// Reserve specific EEPROM sections to avoid conflicts
+#define EEPROM_SETUP_SECTION_START 0
+#define EEPROM_SETUP_SECTION_SIZE 4   // 4 bytes for setup data
+#define EEPROM_USER_SECTION_START (EEPROM_SETUP_SECTION_START + EEPROM_SETUP_SECTION_SIZE)
+#define EEPROM_USER_SECTION_SIZE (EEPROM_SIZE - EEPROM_USER_SECTION_START)
 
 // Sensor Node Configuration
 #define FORCE0_ANALOG_PIN 35

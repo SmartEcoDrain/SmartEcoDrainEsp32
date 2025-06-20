@@ -8,6 +8,7 @@
 #include <Adafruit_VL53L0X.h>
 #include <WiFi.h>
 #include <esp32-hal-adc.h>
+#include <EEPROM.h>
 
 // #define DUMP_AT_COMMANDS
 
@@ -75,6 +76,13 @@ void setup() {
   Serial.printf("Device Version: %s\n", DEVICE_VERSION);
   Serial.printf("API Key: %s\n", ESP32_API_KEY);
   
+  // Initialize EEPROM early to preserve data
+  EEPROM.begin(EEPROM_SIZE);
+  
+  // Check and log current EEPROM state
+  uint16_t currentSetupFlag = (EEPROM.read(SETUP_FLAG_ADDR) << 8) | EEPROM.read(SETUP_FLAG_ADDR + 1);
+  Serial.printf("Current setup flag in EEPROM: 0x%04X\n", currentSetupFlag);
+  
   // Initialize ADC for battery monitoring
   analogSetAttenuation(ADC_11db);
   analogReadResolution(12);
@@ -96,13 +104,15 @@ void setup() {
     Serial.println("Warning: Some sensors failed to initialize");
   }
 
-  // Initialize device setup
-  deviceSetup = new DeviceSetup(deviceId, &modem, &client);
+ deviceSetup = new DeviceSetup(deviceId, &modem, &client);
 
-  // Check if device setup is already completed
-  if (deviceSetup->isSetupCompleted()) {
+  // Check if device setup is already completed with additional verification
+  bool eepromSetupComplete = deviceSetup->isSetupCompleted();
+  Serial.printf("EEPROM setup status: %s\n", eepromSetupComplete ? "COMPLETED" : "NOT COMPLETED");
+  
+  if (eepromSetupComplete) {
     Serial.println("Device setup already completed. Initializing normal operation...");
-    
+
     // Initialize modem for normal operation
     if (initializeModem()) {
       // Initialize database connections

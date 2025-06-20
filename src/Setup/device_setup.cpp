@@ -25,24 +25,68 @@ bool DeviceSetup::isSetupCompleted() {
   EEPROM.begin(EEPROM_SIZE);
   uint16_t magic = (EEPROM.read(SETUP_FLAG_ADDR) << 8) | EEPROM.read(SETUP_FLAG_ADDR + 1);
   EEPROM.end();
+  
+  // Add debug logging to verify EEPROM read
+  Serial.printf("EEPROM Read - Magic: 0x%04X (Expected: 0x%04X)\n", magic, SETUP_MAGIC_NUMBER);
+  
   return magic == SETUP_MAGIC_NUMBER;
 }
 
 void DeviceSetup::markSetupCompleted() {
   EEPROM.begin(EEPROM_SIZE);
+  
+  // Verify current state before writing
+  uint16_t currentMagic = (EEPROM.read(SETUP_FLAG_ADDR) << 8) | EEPROM.read(SETUP_FLAG_ADDR + 1);
+  Serial.printf("Current EEPROM state: 0x%04X\n", currentMagic);
+  
+  // Write the magic number
   EEPROM.write(SETUP_FLAG_ADDR, (SETUP_MAGIC_NUMBER >> 8) & 0xFF);
   EEPROM.write(SETUP_FLAG_ADDR + 1, SETUP_MAGIC_NUMBER & 0xFF);
-  EEPROM.commit();
+  
+  // Ensure data is committed
+  if (EEPROM.commit()) {
+    Serial.println("✓ Setup completion flag written to EEPROM");
+    
+    // Verify the write was successful
+    uint16_t verifyMagic = (EEPROM.read(SETUP_FLAG_ADDR) << 8) | EEPROM.read(SETUP_FLAG_ADDR + 1);
+    if (verifyMagic == SETUP_MAGIC_NUMBER) {
+      Serial.println("✓ EEPROM write verified successfully");
+      setupCompleted = true;
+    } else {
+      Serial.printf("✗ EEPROM write verification failed: 0x%04X\n", verifyMagic);
+    }
+  } else {
+    Serial.println("✗ Failed to commit EEPROM data");
+  }
+  
   EEPROM.end();
-  setupCompleted = true;
 }
 
 void DeviceSetup::resetSetupFlag() {
   EEPROM.begin(EEPROM_SIZE);
+  
+  Serial.println("Resetting setup flag in EEPROM...");
+  
+  // Clear the magic number
   EEPROM.write(SETUP_FLAG_ADDR, 0);
   EEPROM.write(SETUP_FLAG_ADDR + 1, 0);
-  EEPROM.commit();
+  
+  if (EEPROM.commit()) {
+    Serial.println("✓ Setup flag reset in EEPROM");
+    
+    // Verify the reset
+    uint16_t verifyMagic = (EEPROM.read(SETUP_FLAG_ADDR) << 8) | EEPROM.read(SETUP_FLAG_ADDR + 1);
+    if (verifyMagic == 0) {
+      Serial.println("✓ EEPROM reset verified successfully");
+    } else {
+      Serial.printf("✗ EEPROM reset verification failed: 0x%04X\n", verifyMagic);
+    }
+  } else {
+    Serial.println("✗ Failed to commit EEPROM reset");
+  }
+  
   EEPROM.end();
+  setupCompleted = false;
 }
 
 bool DeviceSetup::initializeModemForSetup() {
@@ -371,7 +415,7 @@ void DeviceSetup::handleSetup() {
         JsonDocument response;
         response["success"] = true;
         response["message"] = "Device setup completed successfully";
-        response["device_id"] = deviceId;
+        response["device_uuid"] = deviceId;
         response["device_name"] = deviceName;
         response["full_location"] = fullAddress;
         response["owner_uuid"] = ownerUuid;
