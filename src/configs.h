@@ -20,10 +20,6 @@
 #define SERVER_PORT 443
 #define ESP32_API_KEY "smart-echo-drain-esp32-2025-secure-key"
 
-// Supabase Configuration
-#define SUPABASE_URL "https://mpsrepfjrnjaciobvdrh.supabase.co"
-#define SUPABASE_ANON_KEY "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1wc3JlcGZqcm5qYWNpb2J2ZHJoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk0MDIwNjUsImV4cCI6MjA2NDk3ODA2NX0.l03peDJRu6VhvX6htZ5AIe10whscVC0GVe-51JGbx1Q"
-
 #define DEVICE_ID "esp32_sensor_001"  // Change this for each device
 #define DEVICE_VERSION "0.0.1"
 

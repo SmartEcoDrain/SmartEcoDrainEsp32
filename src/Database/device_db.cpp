@@ -493,8 +493,8 @@ String DeviceDB::checkDeviceSetup(const String& deviceId) {
 
 int DeviceDB::sendHeartbeat(const String& deviceId) {
   JsonDocument heartbeatDoc;
-  heartbeatDoc["deviceId"] = deviceId;
-  heartbeatDoc["timestamp"] = millis();
+  heartbeatDoc["device_id"] = deviceId;
+  heartbeatDoc["last_seen"] = millis();
   heartbeatDoc["status"] = "online";
   
   String heartbeatJson;
