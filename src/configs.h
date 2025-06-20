@@ -16,6 +16,8 @@
 #define TINY_GSM_MODEM_A76XXSSL 
 
 // API Configuration
+#define SERVER_HOST "smart-echodrain.vercel.app"
+#define SERVER_PORT 443
 #define ESP32_API_KEY "smart-echo-drain-esp32-2025-secure-key"
 
 // Supabase Configuration

@@ -323,7 +323,7 @@ int DeviceDB::updateDeviceStatus(const String& deviceId, bool isOnline) {
   
   String endpoint = "/api/devices?uuid=" + deviceId;
   
-  HttpClient http(*client, "smart-echodrain.vercel.app", 443);
+  HttpClient http(*client, SERVER_HOST, SERVER_PORT);
 
   Serial.print(F("Performing HTTPS PUT request... "));
   

@@ -28,6 +28,7 @@
 #include "../configs.h"
 #include "../Database/device_db.h"
 #include "../Database/address.h"
+#include "../Database/profile.h" // Add this include
 
 class DeviceSetup {
 private:
@@ -43,6 +44,7 @@ private:
   // Database connections
   DeviceDB* deviceDB;
   AddressDB* addressDB;
+  ProfileDB* profileDB; // Add this member
   
   // TinyGSM references for setup mode
   TinyGsm* modem;
@@ -54,8 +56,8 @@ private:
   void handleSetup();
   void handleRestart();
   void handleAddressData();
-  void handleProfilesData(); // Add this new method declaration
-  void handleRoot();
+  void handleProfileData(); // Add this method
+
   
   // Modem initialization
   bool initializeModemForSetup();

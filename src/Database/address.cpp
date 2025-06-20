@@ -36,7 +36,7 @@ String AddressDB::getAddressDropdownData(const String& regCode, const String& pr
 
   Serial.println("Fetching address data from: " + endpoint);
 
-  HttpClient http(*client, "smart-echodrain.vercel.app", 443);
+  HttpClient http(*client, SERVER_HOST, SERVER_PORT);
 
   Serial.print(F("Performing HTTPS GET request... "));
   http.connectionKeepAlive(); // Currently, this is needed for HTTPS
