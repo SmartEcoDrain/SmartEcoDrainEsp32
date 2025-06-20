@@ -7,9 +7,9 @@ JsonDocument createDeviceDataJSONObject(const DeviceData &deviceData)
 
   // Add root level fields
   doc["uuid"] = deviceData.uuid;
-  doc["deviceId"] = deviceData.deviceId;
-  doc["lastUpdatedAt"] = deviceData.lastUpdatedAt;
-  doc["createdAt"] = deviceData.createdAt;
+  doc["device_id"] = deviceData.deviceId;
+  doc["last_updated_at"] = deviceData.lastUpdatedAt;
+  doc["created_at"] = deviceData.createdAt;
 
   // Create device object
   doc["cpu_temperature"] = deviceData.cpuTemperature;
@@ -91,9 +91,9 @@ DeviceData parseDeviceDataJSON(const JsonObject &obj)
 
   // Parse root level fields
   deviceData.uuid = obj["uuid"].as<String>();
-  deviceData.deviceId = obj["deviceId"].as<String>();
-  deviceData.lastUpdatedAt = obj["lastUpdatedAt"].as<String>();
-  deviceData.createdAt = obj["createdAt"].as<String>();
+  deviceData.deviceId = obj["device_id"].as<String>();
+  deviceData.lastUpdatedAt = obj["last_updated_at"].as<String>();
+  deviceData.createdAt = obj["created_at"].as<String>();
 
   // Parse device data
   deviceData.cpuTemperature = obj["cpu_temperature"].as<float>();
@@ -154,10 +154,10 @@ String createDeviceJSON(const Device &device)
   // Create device object
   doc["uuid"] = device.uuid;
   doc["name"] = device.name;
-  doc["ownerUuid"] = device.ownerUuid;
-  doc["onlineStatus"] = device.onlineStatus;
-  doc["isActive"] = device.isActive;
-  doc["deviceVersion"] = device.deviceVersion;
+  doc["owner_uuid"] = device.ownerUuid;
+  doc["online_status"] = device.onlineStatus;
+  doc["is_active"] = device.isActive;
+  doc["device_version"] = device.deviceVersion;
 
   // Add location details as JSONB object
   JsonObject location = doc["location"].to<JsonObject>();
@@ -166,12 +166,12 @@ String createDeviceJSON(const Device &device)
   location["province"] = device.location.province.code;
   location["municipality"] = device.location.municipality.code;
   location["barangay"] = device.location.barangay.code;
-  location["postalCode"] = device.location.postalCode;
+  location["postal_code"] = device.location.postalCode;
   location["street"] = device.location.street;
 
   // Add created and updated timestamps
-  doc["createdAt"] = device.createdAt;
-  doc["updatedAt"] = device.updatedAt;
+  doc["created_at"] = device.createdAt;
+  doc["updated_at"] = device.updatedAt;
 
   // Add dynamic config as JSONB
   JsonObject config = doc["config"].to<JsonObject>();
@@ -189,12 +189,12 @@ Device parseDeviceJSON(const JsonObject &obj)
 
   device.uuid = obj["uuid"].as<String>();
   device.name = obj["name"].as<String>();
-  device.ownerUuid = obj["ownerUuid"].as<String>();
-  device.onlineStatus = obj["onlineStatus"].as<bool>();
-  device.isActive = obj["isActive"].as<bool>();
-  device.deviceVersion = obj["deviceVersion"].as<String>();
-  device.createdAt = obj["createdAt"].as<String>();
-  device.updatedAt = obj["updatedAt"].as<String>();
+  device.ownerUuid = obj["owner_uuid"].as<String>();
+  device.onlineStatus = obj["online_status"].as<bool>();
+  device.isActive = obj["is_active"].as<bool>();
+  device.deviceVersion = obj["device_version"].as<String>();
+  device.createdAt = obj["created_at"].as<String>();
+  device.updatedAt = obj["updated_at"].as<String>();
 
   // Parse location
   JsonObject location = obj["location"].as<JsonObject>();

@@ -25,7 +25,7 @@ String ProfileDB::getPublicProfiles() {
   int err = http.get(endpoint);
   if (err != 0) {
     Serial.println(F("failed to connect"));
-    return "{\"success\":false,\"data\":[]}";
+    return "{\"success\":false,\"profiles\":[]}";
   }
 
   int statusCode = http.responseStatusCode();
@@ -33,7 +33,7 @@ String ProfileDB::getPublicProfiles() {
   Serial.println(statusCode);
   
   if (!statusCode) {
-    return "{\"success\":false,\"data\":[]}";
+    return "{\"success\":false,\"profiles\":[]}";
   }
 
   Serial.println(F("Response Headers:"));
@@ -67,15 +67,15 @@ String ProfileDB::getPublicProfiles() {
     JsonDocument doc;
     deserializeJson(doc, body);
     
-    if (doc["success"].as<bool>() && doc.containsKey("data")) {
+    if (doc["success"].as<bool>() && doc.containsKey("profiles")) {
       return body;
     } else {
       Serial.println("Invalid response format from profiles API");
-      return "{\"success\":false,\"data\":[]}";
+      return "{\"success\":false,\"profiles\":[]}";
     }
   } else {
     Serial.println("Failed to fetch public profiles: " + body);
-    return "{\"success\":false,\"data\":[]}";
+    return "{\"success\":false,\"profiles\":[]}";
   }
 }
 
